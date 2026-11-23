@@ -178,7 +178,7 @@
     else if (id === 'search') {
       setCats([]);
       var q = $('search').value;
-      if (q) runSearch(q); else setGrid(null);
+      if (q) runSearch(q); else setGrid(null, 'Type to search all movies & series');
     }
   }
 
@@ -289,11 +289,11 @@
   }
 
   // ------------------------------------------------- in-category search (find)
-  function runFind(q) {
+  function runFind(q, stay) {
     setFlag('scoped', true);
     setGrid(remote('/api/vod/list', { category: S.curCat.id, search: q }),
       'No results for "' + q + '" in ' + S.curCat.title, 5, 'vod');
-    setZone('grid');
+    if (!stay) setZone('grid');                  // typing live keeps focus in the box
   }
   function clearFind() {                          // drop the scoped search, show the whole category
     setFlag('scoped', false);
@@ -775,10 +775,25 @@
     var c = e.keyCode;
     if (c === 9) return e.shiftKey ? K.PGDN : K.PGUP;
     if (e.altKey) return c === 80 ? K.INFO : c;               // Alt+R/S/B/F/P
-    if (c === 8) return S.zone === 'search' ? 8 : K.BACK;     // Backspace edits text in search
+    if (c === 8) return (S.zone === 'search' || S.zone === 'find') ? 8 : K.BACK;  // Backspace edits the search text
     if (MAG && (c === 82 || c === 83 || c === 66 || c === 70 || c === 89)) return 0; // plain letters
     return c;
   }
+  // Search-as-you-type: debounce so we don't hit the API on every keystroke.
+  var liveTimer;
+  function scheduleLive() { clearTimeout(liveTimer); liveTimer = setTimeout(liveSearch, 300); }
+  function liveSearch() {
+    if (S.zone === 'find') {
+      var q = $('find').value.replace(/^\s+|\s+$/g, '');
+      if (q.length >= 2) runFind(q, true);
+      else if (!q && S.flags.scoped) clearFind();
+    } else if (S.zone === 'search') {
+      var s = $('search').value.replace(/^\s+|\s+$/g, '');
+      if (s.length >= 2) runSearch(s);
+      else setGrid(null, 'Type to search all movies & series');
+    }
+  }
+
   document.addEventListener('keydown', function (e) {
     if (e.keyCode === 112 && S.zone !== 'search') {   // Red button: reload the portal
       if (P.o) P.stop();
@@ -786,9 +801,12 @@
       return;
     }
     var h = handlers[S.zone];
-    if (h && h(normKey(e), e) === false) return;
+    if (h && h(normKey(e), e) === false) { scheduleLive(); return; }  // typing fell through
     e.preventDefault();
   }, false);
+  // The MAG on-screen keyboard may insert text without a keydown; cover that too.
+  $('search').addEventListener('input', scheduleLive, false);
+  $('find').addEventListener('input', scheduleLive, false);
 
   // ------------------------------------------------------------------ boot
   function scale() {
