@@ -800,12 +800,31 @@
   [K.LEFT, K.UP, K.RIGHT, K.DOWN, K.OK, K.BACK, K.PGUP, K.PGDN,
    K.PLAY, K.STOP, K.REW, K.FFWD, K.INFO, K.RED, K.BLUE, 113, 114].forEach(function (c) { USED[c] = 1; });
 
+  // Volume: this firmware delivers the keys to us (107/109, mute 192+Alt) but
+  // doesn't act on them, so we drive the player's volume directly.
+  function setVol(d) {
+    if (!MAG) return;
+    try {
+      var v = Math.max(0, Math.min(100, (parseInt(gSTB.GetVolume(), 10) || 0) + d));
+      gSTB.SetMute(false);
+      gSTB.SetVolume(v);
+      toast(v === 0 ? 'Volume 0' : 'Volume ' + v);
+    } catch (e) { /* n/a */ }
+  }
+  function toggleMute() {
+    if (!MAG) return;
+    try { var m = !gSTB.GetMute(); gSTB.SetMute(m); toast(m ? 'Muted' : 'Unmuted'); } catch (e) { /* n/a */ }
+  }
+
   document.addEventListener('keydown', function (e) {
     if (e.keyCode === 112 && S.zone !== 'search') {   // Red button: reload the portal
       if (P.o) P.stop();
       location.reload();
       return;
     }
+    if (e.keyCode === 107) { setVol(5); e.preventDefault(); return; }   // Volume Up
+    if (e.keyCode === 109) { setVol(-5); e.preventDefault(); return; }  // Volume Down
+    if (e.keyCode === 192 && e.altKey) { toggleMute(); e.preventDefault(); return; }  // Mute
     var nk = normKey(e);
     var h = handlers[S.zone];
     if (h && h(nk, e) === false) { scheduleLive(); return; }  // typing fell through
