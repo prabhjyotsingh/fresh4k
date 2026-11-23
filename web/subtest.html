@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>subtest</title>
+<style>
+  html, body { margin: 0; width: 1280px; height: 720px; background: transparent; color: #fff;
+    font-family: Arial, sans-serif; overflow: hidden; }
+  #panel { position: absolute; left: 20px; right: 20px; top: 14px; padding: 12px 18px;
+    background: rgba(8,10,14,.88); border-radius: 10px; font-size: 17px; }
+  h1 { margin: 0 0 6px; font-size: 22px; color: #4f8cff; }
+  .k { color: #ffd25c; font-weight: bold; }
+  #status { margin-top: 6px; color: #8fd0ff; }
+  #log { margin-top: 6px; color: #a0a6b5; white-space: pre-wrap; font-size: 15px; }
+</style></head>
+<body>
+<div id="panel">
+  <h1>Subtitle probe &mdash; "Governor The Silent Saviour"</h1>
+  <div><span class="k">7</span> start movie &nbsp; <span class="k">8</span> jump to 12:50 &nbsp;
+    <span class="k">1</span> baseline &nbsp; <span class="k">2</span> delayed enable &nbsp;
+    <span class="k">3</span> .srt URL &nbsp; <span class="k">4</span> .srt + delayed &nbsp;
+    <span class="k">5</span> pick track PID &nbsp; <span class="k">0</span> subs off &nbsp; BACK stop</div>
+  <div id="status"></div>
+  <div id="log">press 7 to start</div>
+</div>
+<script>
+  var stb = window.gSTB, streamUrl = null, seq = 0, lines = [];
+  function $(id) { return document.getElementById(id); }
+  function log(m) { lines.unshift(m); lines = lines.slice(0, 8); $('log').innerHTML = lines.join('\n'); }
+  function j(v) { try { return typeof v === 'string' ? v : JSON.stringify(v); } catch (e) { return String(v); } }
+  function call(name) {
+    var a = Array.prototype.slice.call(arguments, 1);
+    try { return name + '(' + a.join(',') + ') -> ' + j(stb[name].apply(stb, a)); }
+    catch (e) { return name + ' ERR ' + e; }
+  }
+  function pids() {
+    try { var p = stb.GetSubtitlePIDs(); if (typeof p === 'string') p = JSON.parse(p); return p || []; }
+    catch (e) { return []; }
+  }
+  function srtUrl(ext) {
+    return location.protocol + '//' + location.host + '/api/vod/subtitle' + (ext ? '.srt' : '') +
+      '?url=' + encodeURIComponent(streamUrl) + '&track=' + encodeURIComponent('eng t1') +
+      '&shift=0&_=' + (++seq);
+  }
+  function warm(u, cb) {                 // same pre-fetch the real app does
+    var x = new XMLHttpRequest();
+    x.open('GET', u, true);
+    x.onreadystatechange = function () { if (x.readyState === 4) cb(x.status, (x.responseText || '').length); };
+    x.send();
+  }
+
+  function start() {
+    try { stb.SetSubtitles(false); stb.Stop(); } catch (e) {}
+    log('requesting stream…');
+    var x = new XMLHttpRequest();
+    x.open('GET', '/api/vod/play?movie_id=333044', true);
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      try { streamUrl = JSON.parse(x.responseText).url; } catch (e) { log('play error: ' + x.responseText); return; }
+      log('playing — wait ~8s, then press 8');
+      try { stb.Play('ffmpeg ' + streamUrl); } catch (e) { log('Play ERR ' + e); }
+    };
+    x.send();
+  }
+
+  function exp(n) {
+    if (!streamUrl) { log('press 7 first'); return; }
+    var ext = (n === 3 || n === 4 || n === 5), delayed = (n === 2 || n === 4), u = srtUrl(ext);
+    log('TEST ' + n + ': ' + (ext ? '.srt path' : 'plain path') + ', enable ' + (delayed ? 'after 800ms' : 'immediately') +
+        (n === 5 ? ', select new track PID' : ''));
+    warm(u, function (st, len) {
+      log('server: HTTP ' + st + ', ' + len + ' chars');
+      log(call('LoadExternalSubtitles', u));
+      function enable() {
+        if (n === 5) {
+          var p = pids();
+          log('PIDs after load: ' + j(p));
+          if (p.length) log(call('SetSubtitlePID', p[p.length - 1].pid));
+        }
+        log(call('SetSubtitles', true));
+      }
+      if (delayed) setTimeout(enable, 800); else enable();
+    });
+  }
+
+  setInterval(function () {
+    try { $('status').innerHTML = 'position ' + Math.floor(stb.GetPosTime()) + 's &nbsp; subtitle PIDs: ' + j(pids()); }
+    catch (e) {}
+  }, 1000);
+
+  if (!stb) log('gSTB not available');
+  else { try { stb.InitPlayer(); stb.SetTopWin(0); stb.SetAspect(0x10); stb.SetPIG(1, -1, -1, -1); } catch (e) {} }
+
+  document.addEventListener('keydown', function (e) {
+    var k = e.keyCode, d = (k >= 96 && k <= 105) ? k - 96 : (k >= 48 && k <= 57) ? k - 48 : -1;
+    if (d === 7) start();
+    else if (d === 8) log(call('SetPosTime', 770));
+    else if (d >= 1 && d <= 5) exp(d);
+    else if (d === 0) log(call('SetSubtitles', false));
+    else if (k === 27) { try { stb.SetSubtitles(false); stb.Stop(); } catch (x) {} log('stopped'); }
+    else return;
+    e.preventDefault();
+  });
+</script>
+</body></html>

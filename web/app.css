@@ -106,7 +106,20 @@ body.osd #osd { display: block; }
 #osd-fill { height: 6px; width: 0; background: #4f8cff; border-radius: 3px; }
 #osd-row { margin-top: 12px; color: #a0a6b5; font-size: 18px; }
 #osd-time { float: right; }
+#osd-hint { margin-top: 8px; color: #596074; font-size: 15px; }
 body.live #osd-bar, body.live #osd-time { display: none; }
+
+/* audio & subtitles menu (during playback) */
+#pmenu { display: none; position: absolute; left: 440px; top: 120px; width: 400px; max-height: 480px;
+  overflow: hidden; background: rgba(8,10,14,.96); border-radius: 12px; padding: 16px 0; }
+body.z-pmenu #pmenu { display: block; }
+.pm-head { padding: 14px 24px 6px; color: #4f8cff; font-size: 14px; letter-spacing: 2px; font-weight: 700; }
+.pm-head:first-child { padding-top: 4px; }
+.pm-item { padding: 10px 24px; color: #c3c8d4; font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-item.focus { background: #4f8cff; color: #fff; }
+.pm-item .chk { display: inline-block; width: 18px; color: #8fd0ff; }
+.pm-item.focus .chk { color: #fff; }
+.pm-dead { padding: 10px 24px; color: #596074; font-size: 17px; }
 
 #toast { display: none; position: absolute; left: 490px; top: 320px; width: 300px; padding: 18px; text-align: center;
   background: rgba(20,24,33,.95); border-radius: 10px; font-size: 18px; }

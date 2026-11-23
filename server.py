@@ -11,6 +11,7 @@ Python 3.7+, standard library only.
     python3 server.py                 # uses config.json
     MOCK=1 python3 server.py          # fake data, for testing in a browser
 """
+import concurrent.futures
 import json
 import os
 import re
@@ -84,6 +85,7 @@ class Stalker:
         self.token = None
         self.lock = threading.Lock()
         self.cache = {}
+        self.sub_cache = {}
 
     # -- transport ---------------------------------------------------------
     def _request(self, params):
@@ -262,6 +264,122 @@ class Stalker:
         self.call({"type": "vod", "action": "del_link", "item": url})
         return {"ok": True}
 
+    # -- Subtitles (HLS sidecar tracks the MAG firmware ignores) -----------
+    def _get(self, url):
+        req = urllib.request.Request(url, headers={"User-Agent": self.cfg["user_agent"]})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read().decode("utf-8", "replace")
+
+    @staticmethod
+    def _subs_from_master(text):
+        subs = []
+        for ln in text.splitlines():
+            if "TYPE=SUBTITLES" in ln:
+                name = re.search(r'NAME="([^"]*)"', ln)
+                lang = re.search(r'LANGUAGE="([^"]*)"', ln)
+                uri = re.search(r'URI="([^"]*)"', ln)
+                if uri:
+                    label = (name and name.group(1)) or (lang and lang.group(1)) or "Subtitles"
+                    subs.append({"name": label, "lang": (lang and lang.group(1)) or "", "uri": uri.group(1)})
+        return subs
+
+    def vod_subs(self, url):
+        """List subtitle tracks advertised in a stream's HLS master playlist."""
+        try:
+            subs = self._subs_from_master(self._get(url))
+        except Exception:
+            return []
+        return [{"name": s["name"], "lang": s["lang"]} for s in subs]
+
+    _TS = re.compile(r'(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})')
+
+    @classmethod
+    def _secs(cls, m):
+        h = int(m.group(1) or 0)
+        return h * 3600 + int(m.group(2)) * 60 + int(m.group(3)) + int(m.group(4)) / 1000.0
+
+    @classmethod
+    def _parse_vtt(cls, text):
+        lines = text.splitlines()
+        offset = 0.0
+        for ln in lines[:6]:
+            mm = re.search(r'X-TIMESTAMP-MAP=.*MPEGTS:(\d+).*LOCAL:(\d{2}):(\d{2}):(\d{2})[.,](\d{3})', ln)
+            if mm:
+                local = int(mm.group(2)) * 3600 + int(mm.group(3)) * 60 + int(mm.group(4)) + int(mm.group(5)) / 1000.0
+                offset = int(mm.group(1)) / 90000.0 - local
+        cues, i, n = [], 0, len(lines)
+        while i < n:
+            if '-->' in lines[i]:
+                times = list(cls._TS.finditer(lines[i]))
+                if len(times) >= 2:
+                    start = cls._secs(times[0]) + offset
+                    end = cls._secs(times[1]) + offset
+                    i += 1
+                    txt = []
+                    while i < n and lines[i].strip() != "":
+                        txt.append(re.sub(r'<[^>]+>', '', lines[i]))  # strip inline tags
+                        i += 1
+                    if txt:
+                        cues.append((max(0.0, start), max(0.0, end), "\n".join(txt)))
+                    continue
+            i += 1
+        return cues
+
+    @staticmethod
+    def _srt(cues):
+        seen, uniq = set(), []
+        for c in sorted(cues, key=lambda x: (x[0], x[1])):
+            k = (round(c[0], 2), round(c[1], 2), c[2])
+            if k not in seen:
+                seen.add(k)
+                uniq.append(c)
+
+        def ts(t):
+            ms = int(round(t * 1000))
+            h, ms = divmod(ms, 3600000)
+            m, ms = divmod(ms, 60000)
+            s, ms = divmod(ms, 1000)
+            return "%02d:%02d:%02d,%03d" % (h, m, s, ms)
+
+        return "\n".join("%d\n%s --> %s\n%s\n" % (i, ts(a), ts(b), txt)
+                         for i, (a, b, txt) in enumerate(uniq, 1))
+
+    def _subtitle_cues(self, url, track):
+        """Fetch and merge an HLS subtitle track's WebVTT segments into cues."""
+        key = url.split("?")[0] + "|" + track
+        with self.lock:
+            if key in self.sub_cache:
+                return self.sub_cache[key]
+        subs = self._subs_from_master(self._get(url))
+        if not subs:
+            return []
+        chosen = next((s for s in subs if track in ("", s["name"], s["lang"])), subs[0])
+        base = url.rsplit("/", 1)[0] + "/"
+        pl_url = urllib.parse.urljoin(base, chosen["uri"])
+        seg_base = pl_url.rsplit("/", 1)[0] + "/"
+        segs = [urllib.parse.urljoin(seg_base, l) for l in self._get(pl_url).splitlines()
+                if l and not l.startswith("#")]
+
+        def grab(u):
+            try:
+                return self._parse_vtt(self._get(u))
+            except Exception:
+                return []
+        cues = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
+            for part in ex.map(grab, segs):
+                cues.extend(part)
+        with self.lock:
+            self.sub_cache[key] = cues
+        return cues
+
+    def vod_subtitle_srt(self, url, track="", shift=0.0):
+        """Merged SRT for a subtitle track, optionally time-shifted by `shift` seconds."""
+        cues = self._subtitle_cues(url, track)
+        if shift:
+            cues = [(max(0.0, a + shift), max(0.0, b + shift), t) for (a, b, t) in cues]
+        return self._srt(cues)
+
     # -- Live --------------------------------------------------------------
     def live_genres(self):
         js = self.call({"type": "itv", "action": "get_genres"}, ttl=3600)
@@ -325,6 +443,12 @@ class Mock:
     def vod_release(self, url):
         return {"ok": True}
 
+    def vod_subs(self, url):
+        return [{"name": "English", "lang": "eng"}]
+
+    def vod_subtitle_srt(self, url, track="", shift=0.0):
+        return "1\n00:00:01,000 --> 00:00:04,000\nSample subtitle (mock)\n"
+
     def live_genres(self):
         return [{"id": "1", "title": "News"}, {"id": "2", "title": "Sports"}]
 
@@ -345,6 +469,7 @@ def make_handler(backend, cfg):
         "/api/vod/children": lambda q: backend.vod_children(q["movie_id"], q.get("season_id", "0"), q.get("episode_id", "0")),
         "/api/vod/play": lambda q: backend.vod_play(q["movie_id"], q.get("season_id", "0"), q.get("episode_id", "0"), q.get("series", "")),
         "/api/vod/release": lambda q: backend.vod_release(q["url"]),
+        "/api/vod/subs": lambda q: backend.vod_subs(q["url"]),
         "/api/live/genres": lambda q: backend.live_genres(),
         "/api/live/channels": lambda q: backend.live_channels(q.get("genre", "*"), int(q.get("page", 1))),
         "/api/live/link": lambda q: backend.live_link(q["cmd"]),
@@ -379,6 +504,20 @@ def make_handler(backend, cfg):
             parsed = urllib.parse.urlparse(self.path)
             if parsed.path.startswith("/stalker_portal/"):
                 return self.proxy()
+            if parsed.path in ("/api/vod/subtitle", "/api/vod/subtitle.srt"):   # raw SRT for the player to load
+                q = dict(urllib.parse.parse_qsl(parsed.query))
+                try:
+                    shift = float(q.get("shift", 0) or 0)
+                    srt = backend.vod_subtitle_srt(q.get("url", ""), q.get("track", ""), shift).encode("utf-8")
+                except Exception as e:
+                    self.log_error("subtitle %s -> %s", self.path, e)
+                    return self.send_error(502, str(e))
+                self.send_response(200 if srt else 404)
+                self.send_header("Content-Type", "application/x-subrip; charset=utf-8")
+                self.send_header("Content-Length", str(len(srt)))
+                self.end_headers()
+                self.wfile.write(srt)
+                return
             # clean URLs: /settings -> web/settings.html
             last = parsed.path.rsplit("/", 1)[-1]
             if last and "." not in last and os.path.isfile(os.path.join(WEB, parsed.path.lstrip("/") + ".html")):

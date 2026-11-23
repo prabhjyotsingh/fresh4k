@@ -11,7 +11,8 @@
     REW: 66, FFWD: 70,            // Alt+B / Alt+F on MAG
     INFO: 89,                     // Alt+P on MAG
     BLUE: 115,                    // Ctrl+F4 on MAG, F4 on desktop
-    RED: 112                      // Ctrl+F1 on MAG: reloads the portal
+    RED: 112,                     // Ctrl+F1 on MAG: reloads the portal
+    GREEN: 113                    // Ctrl+F2 on MAG: audio & subtitles while playing
   };
 
   var TABS = [
@@ -612,6 +613,9 @@
     if (P.o) P.stop();
     if (S.zone !== 'player') P.prevZone = S.zone;
     P.o = o; P.url = url; P.paused = false; P.started = false; P.seekTo = null; P.resumeTo = null;
+    // Track selections (subtitles off by default). hlsSubs is null until the menu is first
+    // opened: we don't ask the provider for the track list during normal playback.
+    P.subSel = -1; P.subShift = 0; P.audPid = null; P.hlsSubs = null;
     setZone('player');
     setFlag('playing', true);
     setFlag('live', o.kind === 'live');
@@ -656,7 +660,9 @@
       if (o.kind === 'vod') saveProgress(o, P.len() || 1, P.len() || 1);
       if (o.next) { P.stop(); o.next(); } else P.close();
     } else if (code === 5) {                  // could not open
-      toast('Playback failed');
+      // Say when it failed: before the stream started, or after (e.g. during a resume seek).
+      var when = !P.started ? 'while opening' : (P.resumeTo != null ? 'while resuming at ' + fmt(P.resumeTo) : 'during playback');
+      toast('Playback failed ' + when);
       P.close();
     }
   };
@@ -714,6 +720,7 @@
   function playerKey(k) {
     var live = P.o && P.o.kind === 'live';
     if (k === K.BACK || k === K.STOP) return P.close();
+    if (k === K.GREEN) return P.openMenu();
     if (k === K.INFO) return P.osd(!S.flags.osd);
     if (live) {
       if (k === K.UP || k === K.PGUP) return zap(-1);
@@ -728,6 +735,147 @@
     else if (k === K.FFWD) P.nudge(120);
     else if (k === K.DOWN) P.nudge(-300);
     else if (k === K.UP) P.nudge(300);
+  }
+
+  // --- audio & subtitle menu (during playback) ---
+  function tracks(fn) {
+    var r;
+    try { r = gSTB[fn](); } catch (e) { return []; }
+    if (typeof r === 'string') { try { r = JSON.parse(r); } catch (e) { return []; } }
+    return r && r.length ? r : [];
+  }
+  function trackLabel(t, i) {
+    return esc(t.lang || t.name || t.title || ('Track ' + (i + 1)));
+  }
+
+  function delayLabel() {
+    var v = P.subShift || 0;
+    return 'Delay ' + (v > 0 ? '+' : '') + v.toFixed(2) + 's  ◀ ▶';
+  }
+  function buildMenuItems() {
+    var items = [{ head: 'AUDIO' }];
+    var a = tracks('GetAudioPIDs');
+    if (!a.length) items.push({ dead: 'Default' });
+    for (var i = 0; i < a.length; i++) items.push({ kind: 'audio', pid: a[i].pid, label: trackLabel(a[i], i) });
+    items.push({ head: 'SUBTITLES' });
+    items.push({ kind: 'sub', sub: -1, label: 'Off' });
+    // Subtitles come from the stream's HLS tracks (merged to SRT by the server),
+    // because this firmware doesn't expose them via GetSubtitlePIDs.
+    var subs = P.hlsSubs || [];
+    for (var j = 0; j < subs.length; j++) {
+      items.push({ kind: 'sub', sub: j, label: esc(subs[j].name || subs[j].lang || ('Subtitles ' + (j + 1))) });
+    }
+    if (!subs.length) items.push({ dead: 'None in this title' });
+    if (P.subSel >= 0) items.push({ kind: 'delay' });     // adjust sync once a track is on
+    return items;
+  }
+  P.openMenu = function () {
+    if (!MAG || !P.o) return;
+    if (P.hlsSubs === null) {
+      if (P.o.kind !== 'vod') P.hlsSubs = [];
+      else {                                   // first open: look up this stream's subtitle tracks
+        var url = P.url;
+        toast('Loading tracks…', true);
+        return api('/api/vod/subs', { url: url }, function (err, res) {
+          hideToast();
+          if (P.url !== url) return;           // stopped or switched while loading
+          P.hlsSubs = (!err && res && res.length) ? res : [];
+          if (S.zone === 'player') P.openMenu();
+        });
+      }
+    }
+    if (P.audPid == null) { try { P.audPid = parseInt(gSTB.GetAudioPID(), 10); } catch (e) { P.audPid = null; } }
+    P.menu = { items: buildMenuItems() };
+    P.menu.idx = menuStep(-1, 1);
+    setZone('pmenu');
+    drawMenu();
+  };
+  function rebuildMenu() {
+    if (S.zone !== 'pmenu') return;
+    var idx = P.menu.idx;
+    P.menu.items = buildMenuItems();
+    if (idx >= P.menu.items.length) idx = P.menu.items.length - 1;
+    var it = P.menu.items[idx];
+    if (it && (it.head || it.dead)) idx = menuStep(idx, 1);
+    P.menu.idx = idx;
+    drawMenu();
+  }
+
+  function menuStep(from, dir) {
+    var it = P.menu.items, i = from + dir;
+    while (i >= 0 && i < it.length && (it[i].head || it[i].dead)) i += dir;
+    return (i >= 0 && i < it.length) ? i : from;
+  }
+  function menuCurrent(it) {
+    return it.kind === 'audio' ? (it.pid == P.audPid) : (it.sub === P.subSel);
+  }
+  function drawMenu() {
+    var it = P.menu.items, h = '';
+    for (var i = 0; i < it.length; i++) {
+      if (it[i].head) h += '<div class="pm-head">' + esc(it[i].head) + '</div>';
+      else if (it[i].dead) h += '<div class="pm-dead">' + esc(it[i].dead) + '</div>';
+      else {
+        var label = it[i].kind === 'delay' ? delayLabel() : it[i].label;
+        h += '<div class="pm-item' + (i === P.menu.idx ? ' focus' : '') + '"><span class="chk">' +
+          (menuCurrent(it[i]) ? '✓' : '') + '</span>' + label + '</div>';
+      }
+    }
+    $('pmenu').innerHTML = h;
+  }
+  var subSeq = 0;
+  function subUrl(sel) {
+    // The trailing counter makes every load a distinct URL, so the player
+    // reloads the subtitle after it was turned off (it ignores a repeat URL).
+    return location.protocol + '//' + location.host + '/api/vod/subtitle?url=' +
+      encodeURIComponent(P.url) + '&track=' + encodeURIComponent(P.hlsSubs[sel].name) +
+      '&shift=' + (P.subShift || 0) + '&_=' + (++subSeq);
+  }
+  function applySub(sel, announce) {         // warm the server merge, then hand the SRT to the player
+    var url = subUrl(sel);
+    if (announce) toast('Loading subtitles…', true);
+    var x = new XMLHttpRequest();
+    x.open('GET', url, true);
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      if (announce) hideToast();
+      if (x.status !== 200) { toast('Could not load subtitles'); return; }
+      try {
+        gSTB.LoadExternalSubtitles(url);
+        gSTB.SetSubtitles(true);
+        P.subSel = sel;
+        if (announce) { toast((P.hlsSubs[sel].name || 'Subtitles') + ' on'); rebuildMenu(); }
+      } catch (e) { toast('Subtitles not supported'); }
+    };
+    x.send();
+  }
+  function adjustDelay(d) {
+    if (P.subSel < 0) return;
+    P.subShift = Math.round((P.subShift + d) * 100) / 100;
+    drawMenu();
+    clearTimeout(P.subTimer);
+    P.subTimer = setTimeout(function () { applySub(P.subSel, false); }, 400);
+  }
+  function menuApply(it) {
+    if (it.kind === 'audio') {
+      try { gSTB.SetAudioPID(it.pid); P.audPid = it.pid; } catch (e) { /* n/a */ }
+      drawMenu();
+    } else if (it.kind === 'sub') {
+      if (it.sub === -1) { try { gSTB.SetSubtitles(false); } catch (e) { /* n/a */ } P.subSel = -1; rebuildMenu(); }
+      else applySub(it.sub, true);
+    }
+  }
+  P.closeMenu = function () { setZone('player'); P.osd(true); };
+  function pmenuKey(k) {
+    var m = P.menu, it = m.items[m.idx];
+    if (k === K.BACK || k === K.GREEN || k === K.INFO) return P.closeMenu();
+    if (it && it.kind === 'delay' && (k === K.LEFT || k === K.RIGHT)) {
+      return adjustDelay(k === K.LEFT ? -0.25 : 0.25);     // ◀ ▶ nudge subtitle timing
+    }
+    if (k === K.UP) m.idx = menuStep(m.idx, -1);
+    else if (k === K.DOWN) m.idx = menuStep(m.idx, 1);
+    else if (k === K.OK || k === K.RIGHT) { menuApply(it); return; }
+    else return;
+    drawMenu();
   }
 
   function rebuildDetail() {
@@ -769,7 +917,7 @@
   }
 
   // ------------------------------------------------------------------ keys
-  var handlers = { tabs: tabsKey, cats: catsKey, search: searchKey, find: findKey, grid: gridKey, detail: detailKey, player: playerKey };
+  var handlers = { tabs: tabsKey, cats: catsKey, search: searchKey, find: findKey, grid: gridKey, detail: detailKey, player: playerKey, pmenu: pmenuKey };
   // Map raw key events to K.* (MAG sends media keys as Alt+letter, CH+/- as Tab).
   function normKey(e) {
     var c = e.keyCode;
