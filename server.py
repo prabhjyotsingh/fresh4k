@@ -722,7 +722,7 @@ def main():
                      "or the MAC env var. Use MOCK=1 to try the UI without it.")
         backend = Stalker(cfg)
     server = ThreadingHTTPServer(("0.0.0.0", cfg["port"]), make_handler(backend, cfg))
-    print("fresh4k portal on http://0.0.0.0:%d/ (%s)" % (
+    print("IP TV portal on http://0.0.0.0:%d/ (%s)" % (
         cfg["port"], "mock data" if cfg["mock"] else cfg["portal"]))
     try:
         server.serve_forever()

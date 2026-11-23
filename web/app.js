@@ -560,7 +560,7 @@
         return { item: it, key: it.id, label: it.name, ref: { movie_id: it.id }, start: start };
       };
       if (resumable) list.push({ label: '▶ Resume from ' + fmt(res.pos), fn: function () { playVod(base(res.pos)); } });
-      list.push({ label: resumable ? '↺ Play from start' : '▶ Play', fn: function () { playVod(base(0)); } });
+      list.push({ label: resumable ? 'Play from start' : '▶ Play', fn: function () { playVod(base(0)); } });
     }
     list.push({ label: isFav(it) ? '✓ In My List' : '+ Add to My List', fn: function () { toggleFav(it); buildMain(); } });
     d.list = list;
@@ -681,6 +681,7 @@
   P.seek = function (sec) { if (MAG) gSTB.SetPosTime(Math.floor(sec)); else video.currentTime = sec; };
 
   P.open = function (url, o) {
+    if (window.fkTransport) fkTransport.subtitleOff();   // no subtitle carries over to the next title
     if (P.o) P.stop();
     if (S.zone !== 'player') P.prevZone = S.zone;
     P.o = o; P.url = url; P.paused = false; P.started = false; P.seekTo = null; P.resumeTo = null;
@@ -841,7 +842,7 @@
     return items;
   }
   P.openMenu = function () {
-    if (!MAG || !P.o) return;
+    if ((!MAG && !window.fkTransport) || !P.o) return;
     if (P.hlsSubs === null) {
       if (P.o.kind !== 'vod') P.hlsSubs = [];
       else {                                   // first open: look up this stream's subtitle tracks
@@ -901,7 +902,19 @@
       encodeURIComponent(P.url) + '&track=' + encodeURIComponent(P.hlsSubs[sel].name) +
       '&shift=' + (P.subShift || 0) + '&_=' + (++subSeq);
   }
-  function applySub(sel, announce) {         // warm the server merge, then hand the SRT to the player
+  function applySubTv(sel, announce) {         // TV: merged WebVTT attached as a <track>
+    var track = P.hlsSubs[sel].name, shift = P.subShift || 0, url = P.url;
+    if (announce) toast('Loading subtitles…', true);
+    fkTransport.subtitle(url, track, shift, function (err, vtt) {
+      if (announce) hideToast();
+      if (P.url !== url) return;                // stopped or switched while loading
+      if (err || !vtt || !fkTransport.setSubtitles(vtt)) { toast('Could not load subtitles'); return; }
+      P.subSel = sel;
+      if (announce) { toast((P.hlsSubs[sel].name || 'Subtitles') + ' on'); rebuildMenu(); }
+    });
+  }
+  function applySub(sel, announce) {
+    if (window.fkTransport) return applySubTv(sel, announce);         // warm the server merge, then hand the SRT to the player
     var url = subUrl(sel);
     if (announce) toast('Loading subtitles…', true);
     var x = new XMLHttpRequest();
@@ -931,7 +944,12 @@
       try { gSTB.SetAudioPID(it.pid); P.audPid = it.pid; } catch (e) { /* n/a */ }
       drawMenu();
     } else if (it.kind === 'sub') {
-      if (it.sub === -1) { try { gSTB.SetSubtitles(false); } catch (e) { /* n/a */ } P.subSel = -1; rebuildMenu(); }
+      if (it.sub === -1) {
+        try { gSTB.SetSubtitles(false); } catch (e) { /* n/a */ }
+        if (window.fkTransport) fkTransport.subtitleOff();
+        P.subSel = -1;
+        rebuildMenu();
+      }
       else applySub(it.sub, true);
     }
   }
@@ -1045,7 +1063,7 @@
   }
 
   document.addEventListener('keydown', function (e) {
-    if (e.keyCode === 112 && S.zone !== 'search') {   // Red button: reload the portal
+    if ((e.keyCode === 112 || e.keyCode === 403) && S.zone !== 'search') {   // Red button (403 on webOS): reload the portal
       if (P.o) P.stop();
       location.reload();
       return;

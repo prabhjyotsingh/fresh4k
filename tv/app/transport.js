@@ -74,6 +74,35 @@
     else replayBack();
   };
 
+  // Subtitles: the service merges the stream's HLS subtitle track into WebVTT;
+  // the TV's <video> shows it through a <track> element.
+  window.fkTransport.subtitle = function (streamUrl, track, shift, cb) {
+    call('api', { path: '/api/vod/subtitle', params: { url: streamUrl, track: track, shift: shift } },
+      function (err, r) {
+        if (err) return cb(err);
+        cb(null, r.data && r.data.vtt);
+      });
+  };
+  window.fkTransport.subtitleOff = function () {
+    var v = document.getElementById('video');
+    if (!v) return;
+    var old = v.getElementsByTagName('track');
+    for (var i = old.length - 1; i >= 0; i--) v.removeChild(old[i]);
+  };
+  window.fkTransport.setSubtitles = function (vtt) {
+    this.subtitleOff();
+    var v = document.getElementById('video');
+    if (!v || !window.URL || !URL.createObjectURL) return false;
+    var t = document.createElement('track');
+    t.kind = 'subtitles';
+    t.label = 'Subtitles';
+    t.srclang = 'en';
+    t.src = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
+    v.appendChild(t);
+    if (t.track) t.track.mode = 'showing';
+    return true;
+  };
+
   // Key-code readout for finding remote codes: shows each key press in a yellow
   // box for 4 seconds. Off by default. To use it, remove the /* and */ lines.
   /*
@@ -96,7 +125,7 @@
     var hint = document.getElementById('hint');
     if (hint) hint.innerHTML = hint.innerHTML.replace('BACK return', 'STOP back');
     var osd = document.getElementById('osd-hint');
-    if (osd) osd.textContent = 'STOP: back to menu   ◄► skip 30s   ▲▼ skip 5m   OK pause';
+    if (osd) osd.textContent = 'GREEN: subtitles   STOP: back   LEFT/RIGHT: 30s   UP/DOWN: 5 min   OK: pause';
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fixHints, false);
   else fixHints();

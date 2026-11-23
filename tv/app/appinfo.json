@@ -4,9 +4,9 @@
   "vendor": "fresh4k",
   "type": "web",
   "main": "index.html",
-  "title": "fresh4k",
+  "title": "IP TV",
   "icon": "icon.png",
-  "largeIcon": "icon.png",
+  "largeIcon": "largeIcon.png",
   "uiRequired": true,
   "supportLandscape": true,
   "resolution": "1920x1080"

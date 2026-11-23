@@ -385,6 +385,161 @@ function liveLink(cmd, cb) {
     });
 }
 
+// ------------------------------------------------------------- subtitles
+// Port of server.py's subtitle code: read the stream's HLS subtitle tracks, merge
+// their WebVTT segments, shift timing, and return WebVTT for the TV's <track>.
+var url = require('url');
+var subCache = {};
+
+// GET a text URL (http or https), following redirects. Callback: (err, text).
+function fetchText(target, cb, depth) {
+  var lib = /^https:/i.test(target) ? require('https') : http;
+  var req = lib.get(target, { headers: { 'User-Agent': cfg.user_agent }, timeout: 20000 }, function (res) {
+    if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && (depth || 0) < 5) {
+      res.resume();
+      return fetchText(url.resolve(target, res.headers.location), cb, (depth || 0) + 1);
+    }
+    if (res.statusCode !== 200) { res.resume(); return cb('HTTP ' + res.statusCode); }
+    var body = '';
+    res.setEncoding('utf8');
+    res.on('data', function (d) { body += d; });
+    res.on('end', function () { cb(null, body); });
+  });
+  req.on('timeout', function () { req.abort(); cb('timeout'); });
+  req.on('error', function (e) { cb(String(e.message || e)); });
+}
+
+// server.py _subs_from_master()
+function subsFromMaster(text) {
+  var subs = [];
+  text.split(/\r?\n/).forEach(function (ln) {
+    if (ln.indexOf('TYPE=SUBTITLES') < 0) return;
+    var name = /NAME="([^"]*)"/.exec(ln), lang = /LANGUAGE="([^"]*)"/.exec(ln), uri = /URI="([^"]*)"/.exec(ln);
+    if (!uri) return;
+    var label = (name && name[1]) || (lang && lang[1]) || 'Subtitles';
+    subs.push({ name: label, lang: (lang && lang[1]) || '', uri: uri[1] });
+  });
+  return subs;
+}
+
+function tsSecs(m) {
+  return (parseInt(m[1] || 0, 10)) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10) + parseInt(m[4], 10) / 1000;
+}
+
+// server.py _parse_vtt(): cues as [start, end, text], with MPEG-TS offset applied.
+function parseVtt(text) {
+  var lines = text.split(/\r?\n/), offset = 0, i, m, cues = [];
+  for (i = 0; i < Math.min(6, lines.length); i++) {
+    m = /X-TIMESTAMP-MAP=.*MPEGTS:(\d+).*LOCAL:(\d{2}):(\d{2}):(\d{2})[.,](\d{3})/.exec(lines[i]);
+    if (m) {
+      var local = parseInt(m[2], 10) * 3600 + parseInt(m[3], 10) * 60 + parseInt(m[4], 10) + parseInt(m[5], 10) / 1000;
+      offset = parseInt(m[1], 10) / 90000 - local;
+    }
+  }
+  var n = lines.length;
+  for (i = 0; i < n; i++) {
+    if (lines[i].indexOf('-->') < 0) continue;
+    var re = /(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})/g, times = [], t;
+    while ((t = re.exec(lines[i])) !== null) times.push(t);
+    if (times.length < 2) continue;
+    var start = tsSecs(times[0]) + offset, end = tsSecs(times[1]) + offset;
+    var txt = [];
+    i++;
+    while (i < n && lines[i].trim() !== '') { txt.push(lines[i].replace(/<[^>]+>/g, '')); i++; }
+    if (txt.length) cues.push([Math.max(0, start), Math.max(0, end), txt.join('\n')]);
+  }
+  return cues;
+}
+
+// Run fn(item, done) over items, at most 8 at a time. cb(results) when all are done.
+function fetchAll(items, fn, cb) {
+  var results = new Array(items.length), next = 0, active = 0, done = 0;
+  if (!items.length) return cb(results);
+  (function pump() {
+    while (active < 8 && next < items.length) {
+      (function (i) {
+        active++;
+        fn(items[i], function (r) {
+          results[i] = r;
+          active--;
+          done++;
+          if (done === items.length) cb(results); else pump();
+        });
+      })(next++);
+    }
+  })();
+}
+
+// server.py _subtitle_cues(): all cues of one subtitle track of a stream.
+function subtitleCues(streamUrl, track, cb) {
+  var key = streamUrl.split('?')[0] + '|' + track;
+  if (subCache[key]) return cb(null, subCache[key]);
+  fetchText(streamUrl, function (err, text) {
+    if (err) return cb(err);
+    var subs = subsFromMaster(text);
+    if (!subs.length) return cb(null, []);
+    var chosen = null;                           // first track matching the name/lang, else the first
+    for (var j = 0; j < subs.length && !chosen; j++) {
+      if (track === '' || track === subs[j].name || track === subs[j].lang) chosen = subs[j];
+    }
+    chosen = chosen || subs[0];
+    var base = streamUrl.slice(0, streamUrl.lastIndexOf('/') + 1);
+    var plUrl = url.resolve(base, chosen.uri);
+    fetchText(plUrl, function (err2, pl) {
+      if (err2) return cb(err2);
+      var segBase = plUrl.slice(0, plUrl.lastIndexOf('/') + 1);
+      var segs = pl.split(/\r?\n/).filter(function (l) { return l && l.charAt(0) !== '#'; })
+        .map(function (l) { return url.resolve(segBase, l); });
+      fetchAll(segs, function (u, done) {
+        fetchText(u, function (e, t) { done(e ? [] : parseVtt(t)); });
+      }, function (parts) {
+        var cues = [];
+        parts.forEach(function (p) { cues = cues.concat(p); });
+        subCache[key] = cues;
+        cb(null, cues);
+      });
+    });
+  });
+}
+
+// WebVTT text from cues, shifted by `shift` seconds. Same de-duplication as server.py _srt().
+function toVtt(cues, shift) {
+  var sorted = cues.slice().sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; });
+  var seen = {}, uniq = [];
+  sorted.forEach(function (c) {
+    var a = Math.max(0, c[0] + (shift || 0)), b = Math.max(0, c[1] + (shift || 0));
+    var k = a.toFixed(2) + '|' + b.toFixed(2) + '|' + c[2];
+    if (!seen[k]) { seen[k] = true; uniq.push([a, b, c[2]]); }
+  });
+  function ts(t) {
+    var ms = Math.round(t * 1000);
+    var h = Math.floor(ms / 3600000); ms -= h * 3600000;
+    var m = Math.floor(ms / 60000); ms -= m * 60000;
+    var s = Math.floor(ms / 1000); ms -= s * 1000;
+    function p(n, w) { n = String(n); while (n.length < w) n = '0' + n; return n; }
+    return p(h, 2) + ':' + p(m, 2) + ':' + p(s, 2) + '.' + p(ms, 3);
+  }
+  return 'WEBVTT\n\n' + uniq.map(function (c) {
+    return ts(c[0]) + ' --> ' + ts(c[1]) + '\n' + c[2] + '\n';
+  }).join('\n');
+}
+
+// server.py vod_subs(): subtitle track names for the menu. Errors give an empty list.
+function vodSubs(streamUrl, cb) {
+  fetchText(streamUrl, function (err, text) {
+    if (err) return cb(null, []);
+    cb(null, subsFromMaster(text).map(function (s) { return { name: s.name, lang: s.lang }; }));
+  });
+}
+
+// server.py vod_subtitle_srt(), returned as WebVTT: { vtt: "..." }.
+function vodSubtitle(streamUrl, track, shift, cb) {
+  subtitleCues(streamUrl, track || '', function (err, cues) {
+    if (err) return cb(err);
+    cb(null, { vtt: toVtt(cues, shift) });
+  });
+}
+
 // ------------------------------------------------------------- dispatcher
 // Routes the page's /api/... paths to the functions above. Anything not
 // ported yet (live TV, subtitles) returns an error the UI can show.
@@ -398,6 +553,10 @@ function route(p, params, cb) {
       return vodChildren(q.movie_id, q.season_id || '0', q.episode_id || '0', cb);
     case '/api/vod/play':
       return vodPlay(q.movie_id, q.season_id || '0', q.episode_id || '0', q.series || '', cb);
+    case '/api/vod/subs':
+      return vodSubs(q.url || '', cb);
+    case '/api/vod/subtitle':
+      return vodSubtitle(q.url || '', q.track || '', parseFloat(q.shift) || 0, cb);
     case '/api/adult/unlock':
       return adultUnlock(q.pin, cb);
     case '/api/adult/lock':

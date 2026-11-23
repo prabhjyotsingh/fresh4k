@@ -93,8 +93,6 @@ def main():
     shutil.copy(os.path.join(ROOT, "web", "app.css"), OUT)
     with open(os.path.join(OUT, "service", "config.json"), "w") as f:
         json.dump(cfg, f, indent=2)
-    with open(os.path.join(OUT, "icon.png"), "wb") as f:
-        f.write(png(80, 80, (0x2b, 0x6c, 0xb0)))
     lib_dir = os.path.join(OUT, "webOSTVjs-1.2.13")
     os.makedirs(lib_dir)
     shutil.copy(find_webos_lib(), lib_dir)
