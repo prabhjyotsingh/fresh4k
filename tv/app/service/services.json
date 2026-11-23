@@ -1,0 +1,7 @@
+{
+  "id": "com.fresh4k.app.service",
+  "description": "fresh4k portal service",
+  "services": [
+    { "name": "com.fresh4k.app.service" }
+  ]
+}

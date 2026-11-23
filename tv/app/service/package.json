@@ -1,0 +1,7 @@
+{
+  "name": "com.fresh4k.app.service",
+  "version": "0.1.0",
+  "description": "fresh4k portal service",
+  "main": "services.js",
+  "license": "UNLICENSED"
+}

@@ -48,6 +48,7 @@
     return out.join('&');
   }
   function api(path, params, cb) {
+    if (window.fkTransport) return fkTransport.api(path, params || {}, cb);   // TV build only
     var x = new XMLHttpRequest();
     x.open('GET', path + '?' + qs(params || {}), true);
     x.timeout = 30000;
@@ -62,6 +63,7 @@
   }
   // Favorites / resume points are stored on the server (state.json) so they survive box reboots.
   var STATE = (function () {
+    if (window.fkTransport) return fkTransport.state();                        // TV build only
     try {
       var x = new XMLHttpRequest();
       x.open('GET', '/api/state', false);
@@ -75,6 +77,7 @@
   function save(key, v) {
     STATE[key] = v;
     var body = {}; body[key] = v;
+    if (window.fkTransport) return fkTransport.saveState(body);                // TV build only
     var x = new XMLHttpRequest();
     x.open('POST', '/api/state', true);
     x.setRequestHeader('Content-Type', 'application/json');
@@ -106,15 +109,16 @@
     document.body.className = c.join(' ');
   }
   function setZone(z) {
+    if (window.fkTransport && z !== S.zone) fkTransport.zone(z);     // TV build only: history for Back
     S.zone = z;
     bodyClass();
-    var input = z === 'search' ? $('search') : z === 'find' ? $('find') : null;
+    var input = z === 'search' ? $('search') : z === 'find' ? $('find') : z === 'pin' ? $('pin') : null;
     if (input) {
       input.focus();                             // CSS docks the field low; the keyboard follows it
       try { if (MAG && gSTB.ShowVirtualKeyboard) gSTB.ShowVirtualKeyboard(); } catch (e) { /* n/a */ }
     } else {
       var a = document.activeElement;
-      if (a && (a.id === 'search' || a.id === 'find')) {
+      if (a && (a.id === 'search' || a.id === 'find' || a.id === 'pin')) {
         a.blur();
         try { if (MAG && gSTB.HideVirtualKeyboard) gSTB.HideVirtualKeyboard(); } catch (e) { /* n/a */ }
       }
@@ -140,7 +144,7 @@
     return null;
   }
   function saveProgress(o, pos, len) {
-    if (!o || !o.key || !(pos > 0)) return;
+    if (!o || !o.key || !(pos > 0) || (o.item && o.item.adult)) return;   // adult titles never go in Continue watching
     var resume = load('resume', {}), recent = load('recent', []), done = len > 0 && pos / len > 0.95;
     for (var i = 0; i < recent.length; i++) if (recent[i].item.id === o.item.id) { recent.splice(i, 1); break; }
     if (done) delete resume[o.key];
@@ -247,6 +251,7 @@
     S.cat = i;
     drawCats();
     var tab = TABS[S.tab].id, id = S.cats[i].id;
+    if (S.cats[i].adult) return adultAction(S.cats[i].adult);
     setFlag('cansearch', tab === 'vod');
     setFlag('scoped', false);
     if (tab === 'vod') {
@@ -255,15 +260,78 @@
       $('find').placeholder = 'Search in ' + S.curCat.title;
       setGrid(remote('/api/vod/list', { category: id }), null, 5, 'vod');
     }
-    else if (tab === 'live') setGrid(remote('/api/live/channels', { genre: id }), null, 4, 'live');
+    else if (tab === 'live') {
+      if (S.cats[i].group) return liveDrill(S.cats[i].group);     // group row: show its genres
+      if (S.cats[i].back) return liveTop();                       // back row: show the groups
+      setGrid(remote('/api/live/channels', { genre: id }), null, 4, 'live');
+    }
     else if (tab === 'mine') {
       var list = id === 'favs' ? favs() : (function () {
         var r = load('recent', []), out = [];
-        for (var j = 0; j < r.length; j++) out.push(r[j].item);
+        for (var j = 0; j < r.length; j++) if (!r[j].item.adult) out.push(r[j].item);
         return out;
       })();
       setGrid(local(list), id === 'favs' ? 'Press ■ BLUE on any title to add it here' : 'Nothing watched yet', 5, 'vod');
     }
+  }
+
+  // Live TV is two levels: groups (ENGLISH, SPORTS...) then genres. Group and back
+  // rows open a list instead of a channel grid, so they never auto-select.
+  function isNav(c) { return !!(c && (c.group || c.back || c.adult)); }
+
+  // Adult rows: "unlock" asks for the PIN, "lock" locks again right away.
+  var pinOk = false;
+  function adultAction(kind) {
+    if (kind === 'lock') {
+      api('/api/adult/lock', {}, function (err) {
+        if (err) return toast(err);
+        toast('Adult content locked');
+        selectTab(S.tab);
+      });
+      return;
+    }
+    $('pin').value = '';
+    setZone('pin');
+  }
+  function leavePin(ok) {                       // back to the menu, as the Back key would do
+    pinOk = ok;
+    if (window.fkTransport) return fkTransport.back();   // TV: pops the pin's history entry
+    pinKey(K.BACK);                                       // MAG: no history to pop
+  }
+  function pinKey(k) {
+    var input = $('pin');
+    if (k === K.BACK) {
+      var ok = pinOk;
+      pinOk = false;
+      input.value = '';
+      setZone('cats');
+      if (ok) { toast('Adult content unlocked'); selectTab(S.tab); }
+      return;
+    }
+    if (k === K.OK) {
+      api('/api/adult/unlock', { pin: input.value }, function (err) {
+        if (err) { toast(err); input.value = ''; return; }
+        leavePin(true);
+      });
+      return;
+    }
+    return false;                               // digits go into the PIN field
+  }
+  function liveDrill(key) {
+    api('/api/live/genres', { group: key }, function (err, list) {
+      if (err) return toast(err);
+      S.cats = list;
+      S.cat = S.catFocus = list.length > 1 ? 1 : 0;               // first genre under the back row
+      $('cats').scrollTop = 0;
+      drawCats();
+      setGrid(null, 'Pick a genre on the left', 4, 'live');
+    });
+  }
+  function liveTop() {
+    api('/api/live/genres', {}, function (err, list) {
+      if (err) return toast(err);
+      setCats(list);                                              // selects All and loads its channels
+    });
   }
 
   var catTimer;
@@ -280,13 +348,16 @@
     else if (k === K.PGUP) { var su = catSnap(Math.max(0, S.catFocus - 10)); if (su >= 0) S.catFocus = su; }
     else if (k === K.RIGHT || k === K.OK) {
       clearTimeout(catTimer);
+      if (isNav(S.cats[S.catFocus])) { selectCat(S.catFocus); return; }   // stay in the list
       if (S.cat !== S.catFocus) selectCat(S.catFocus);
       return setZone('grid');
     } else if (k === K.BACK) return setZone('tabs');
     else return;
     drawCats();
     clearTimeout(catTimer);
-    catTimer = setTimeout(function () { if (S.cat !== S.catFocus) selectCat(S.catFocus); }, 450);
+    catTimer = setTimeout(function () {
+      if (S.cat !== S.catFocus && !isNav(S.cats[S.catFocus])) selectCat(S.catFocus);
+    }, 450);
   }
 
   // ------------------------------------------------- in-category search (find)
@@ -917,13 +988,14 @@
   }
 
   // ------------------------------------------------------------------ keys
-  var handlers = { tabs: tabsKey, cats: catsKey, search: searchKey, find: findKey, grid: gridKey, detail: detailKey, player: playerKey, pmenu: pmenuKey };
+  var handlers = { tabs: tabsKey, cats: catsKey, search: searchKey, find: findKey, grid: gridKey, detail: detailKey, player: playerKey, pmenu: pmenuKey, pin: pinKey };
   // Map raw key events to K.* (MAG sends media keys as Alt+letter, CH+/- as Tab).
   function normKey(e) {
     var c = e.keyCode;
+    if (window.fkKeyMap && fkKeyMap.hasOwnProperty(c)) return fkKeyMap[c];     // TV remote (tv/app/transport.js)
     if (c === 9) return e.shiftKey ? K.PGDN : K.PGUP;
     if (e.altKey) return c === 80 ? K.INFO : c;               // Alt+R/S/B/F/P
-    if (c === 8) return (S.zone === 'search' || S.zone === 'find') ? 8 : K.BACK;  // Backspace edits the search text
+    if (c === 8) return (S.zone === 'search' || S.zone === 'find' || S.zone === 'pin') ? 8 : K.BACK;  // Backspace edits the search text
     if (MAG && (c === 82 || c === 83 || c === 66 || c === 70 || c === 89)) return 0; // plain letters
     return c;
   }

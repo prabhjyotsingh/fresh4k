@@ -11,5 +11,6 @@
   "vod_groups": [
     { "title": "ENGLISH", "ids": ["1", "10"] },
     { "title": "HINDI", "ids": ["19", "15"] }
-  ]
+  ],
+  "adult_pin": ""
 }

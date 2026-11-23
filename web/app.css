@@ -132,3 +132,11 @@ body.z-pmenu #pmenu { display: block; }
 #voltrack { position: absolute; left: 28px; top: 28px; width: 8px; height: 268px; background: #333a48; border-radius: 4px; }
 #volfill { position: absolute; left: 0; bottom: 0; width: 8px; background: #4f8cff; border-radius: 4px; }
 #voltxt { position: absolute; left: 0; bottom: 18px; width: 64px; text-align: center; color: #fff; font-size: 22px; }
+
+/* Adult PIN prompt (shown while the "pin" zone is active) */
+#pinbox { display: none; position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%);
+  background: #111; border: 2px solid #666; padding: 30px 40px; z-index: 200; text-align: center; }
+body.z-pin #pinbox { display: block; }
+#pin-title { font-size: 26px; margin-bottom: 14px; }
+#pin { font-size: 40px; width: 260px; text-align: center; letter-spacing: 8px; }
+#pin-hint { font-size: 20px; color: #999; margin-top: 12px; }

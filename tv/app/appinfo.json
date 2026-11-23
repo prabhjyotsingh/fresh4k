@@ -1,0 +1,13 @@
+{
+  "id": "com.fresh4k.app",
+  "version": "0.1.0",
+  "vendor": "fresh4k",
+  "type": "web",
+  "main": "index.html",
+  "title": "fresh4k",
+  "icon": "icon.png",
+  "largeIcon": "icon.png",
+  "uiRequired": true,
+  "supportLandscape": true,
+  "resolution": "1920x1080"
+}

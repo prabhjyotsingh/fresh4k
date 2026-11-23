@@ -26,6 +26,44 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
+# Adult content is locked by default. Same rule as tv/app/service/services.js:
+# categories (and live genres) whose title matches this are hidden everywhere.
+ADULT_TITLE = re.compile(r"adult|18\+|xxx|porn", re.I)
+
+
+def group_live(genres):
+    """Two-level Live TV menu. Returns (top, subs):
+      top  - All, then one row per group (ENGLISH (21) >, SPORTS (25) >, ...)
+      subs - {group: [genres in that group]}; a group with one genre goes to OTHER.
+    Mirrored in tv/app/service/services.js."""
+    top, groups, order, subs = [], {}, [], {}
+    for g in genres:
+        if g["id"] == "*":                           # "All" stays on top
+            top.append(g)
+            continue
+        parts = g["title"].split("|")
+        key = parts[0].strip().upper() or "OTHER"
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append((g, parts))
+    others = []
+    for key in sorted(order):                       # groups and their genres sorted by name
+        items = groups[key]
+        if len(items) >= 2:
+            subs[key] = [{"id": g["id"], "title": " | ".join(p.strip() for p in parts[1:]).strip() or key}
+                         for g, parts in items]
+        else:
+            others.extend(g for g, _ in items)
+    if others:
+        subs.setdefault("OTHER", []).extend(others)
+    for key in subs:
+        subs[key].sort(key=lambda t: t["title"].upper())
+    for key in sorted(order) + ["OTHER"]:
+        if key in subs and not any(t.get("group") == key for t in top):
+            top.append({"id": "grp:" + key, "title": "%s (%d)  >" % (key, len(subs[key])), "group": key})
+    return top, subs
+
 DEFAULTS = {
     "portal": "http://fresh4k.cc",
     "api_path": "/stalker_portal/server/load.php",
@@ -86,6 +124,7 @@ class Stalker:
         self.lock = threading.Lock()
         self.cache = {}
         self.sub_cache = {}
+        self.adult_unlocked = False                 # set by the PIN; resets when the server restarts
 
     # -- transport ---------------------------------------------------------
     def _request(self, params):
@@ -183,6 +222,7 @@ class Stalker:
     def _vod_item(self, x):
         return {
             "id": str(x.get("id")),
+            "category_id": str(x.get("category_id") or ""),
             "name": x.get("name") or x.get("o_name") or "",
             "year": x.get("year") or "",
             "rating": x.get("rating_imdb") or x.get("rating_kinopoisk") or "",
@@ -201,11 +241,59 @@ class Stalker:
             "series": x.get("series") or [],
         }
 
+    # -- Adult lock --------------------------------------------------------
+    # The portal's "censored" flag is 0 on everything, so lock by category:
+    # titles matching ADULT_TITLE, plus config "locked_categories". Turn off
+    # with "adult_lock": false in config.json. Mirrored in tv/app/service/services.js.
+    def _locked_from(self, categories):
+        locked = set(str(i) for i in self.cfg.get("locked_categories") or [])
+        for c in categories or []:
+            if ADULT_TITLE.search(c.get("title") or ""):
+                locked.add(str(c.get("id")))
+        return locked
+
+    def lock_active(self):
+        return self.cfg.get("adult_lock", True) and not self.adult_unlocked
+
+    def adult_row(self):
+        """Menu row to unlock or lock adult content; none unless adult_pin is set."""
+        if not self.cfg.get("adult_pin"):
+            return None
+        if self.adult_unlocked:
+            return {"id": "adult-lock", "title": "Lock adult content", "adult": "lock"}
+        return {"id": "adult-unlock", "title": "Adult content (PIN)", "adult": "unlock"}
+
+    def _adult_ids(self):
+        """Adult category ids, whether or not they are unlocked right now.
+        Used to keep adult titles out of Continue watching."""
+        if not self.cfg.get("adult_lock", True):
+            return set()
+        return self._locked_from(self.call({"type": "vod", "action": "get_categories"}, ttl=3600))
+
+    def adult_unlock(self, pin):
+        want = str(self.cfg.get("adult_pin") or "")
+        if not want:
+            raise RuntimeError("no adult PIN set in config.json")
+        if str(pin) != want:
+            raise RuntimeError("wrong PIN")
+        self.adult_unlocked = True
+        return {"ok": True}
+
+    def adult_lock(self):
+        self.adult_unlocked = False
+        return {"ok": True}
+
+    def locked_ids(self):
+        if not self.lock_active():
+            return set()
+        return self._locked_from(self.call({"type": "vod", "action": "get_categories"}, ttl=3600))
+
     # -- VOD ---------------------------------------------------------------
-    def vod_categories(self):
-        js = self.call({"type": "vod", "action": "get_categories"}, ttl=3600)
-        cats = [{"id": str(c["id"]), "title": c["title"]} for c in js or []
-                if str(c.get("id")) != "*"]
+    def _vod_category_list(self):
+        raw = self.call({"type": "vod", "action": "get_categories"}, ttl=3600)
+        locked = self._locked_from(raw) if self.lock_active() else set()
+        cats = [{"id": str(c["id"]), "title": c["title"]} for c in raw or []
+                if str(c.get("id")) != "*" and str(c.get("id")) not in locked]
         by_id = {c["id"]: c for c in cats}
         groups = self.cfg.get("vod_groups") or []
         if groups:                                   # emit section headers + their categories
@@ -221,13 +309,24 @@ class Stalker:
             return [by_id[i] for i in wanted if i in by_id]
         return cats
 
+    def vod_categories(self):
+        out = self._vod_category_list()
+        row = self.adult_row()
+        return out + [row] if row else out
+
     def vod_list(self, category, page, search=""):
         # category "*" searches everything; a real id scopes the search to it.
         p = {"type": "vod", "action": "get_ordered_list", "category": category or "*",
              "genre": "*", "p": page, "sortby": "added", "fav": 0}
         if search:
             p["search"] = search
-        return self._page(self.call(p, ttl=600), self._vod_item)
+        res = self._page(self.call(p, ttl=600), self._vod_item)
+        locked = self.locked_ids()
+        res["items"] = [i for i in res["items"] if i["category_id"] not in locked]
+        adult = self._adult_ids()
+        for i in res["items"]:
+            i["adult"] = i["category_id"] in adult
+        return res
 
     def vod_children(self, movie_id, season_id="0", episode_id="0"):
         """Drill into a title: seasons (season_id=0), episodes of a season, or
@@ -381,9 +480,16 @@ class Stalker:
         return self._srt(cues)
 
     # -- Live --------------------------------------------------------------
-    def live_genres(self):
+    def live_genres(self, group=None):
         js = self.call({"type": "itv", "action": "get_genres"}, ttl=3600)
-        return [{"id": str(g["id"]), "title": g["title"]} for g in js or []]
+        lock = self.lock_active()
+        genres = [{"id": str(g["id"]), "title": g["title"]} for g in js or []
+                  if not (lock and ADULT_TITLE.search(g.get("title") or ""))]
+        top, subs = group_live(genres)
+        if group is None:
+            row = self.adult_row()
+            return top + [row] if row else top
+        return [{"id": "back", "title": "< All groups", "back": True}] + subs.get(group, [])
 
     def live_channels(self, genre, page):
         js = self.call({"type": "itv", "action": "get_ordered_list",
@@ -449,7 +555,7 @@ class Mock:
     def vod_subtitle_srt(self, url, track="", shift=0.0):
         return "1\n00:00:01,000 --> 00:00:04,000\nSample subtitle (mock)\n"
 
-    def live_genres(self):
+    def live_genres(self, group=None):
         return [{"id": "1", "title": "News"}, {"id": "2", "title": "Sports"}]
 
     def live_channels(self, genre, page):
@@ -469,8 +575,10 @@ def make_handler(backend, cfg):
         "/api/vod/children": lambda q: backend.vod_children(q["movie_id"], q.get("season_id", "0"), q.get("episode_id", "0")),
         "/api/vod/play": lambda q: backend.vod_play(q["movie_id"], q.get("season_id", "0"), q.get("episode_id", "0"), q.get("series", "")),
         "/api/vod/release": lambda q: backend.vod_release(q["url"]),
+        "/api/adult/unlock": lambda q: backend.adult_unlock(q.get("pin", "")),
+        "/api/adult/lock": lambda q: backend.adult_lock(),
         "/api/vod/subs": lambda q: backend.vod_subs(q["url"]),
-        "/api/live/genres": lambda q: backend.live_genres(),
+        "/api/live/genres": lambda q: backend.live_genres(q.get("group")),
         "/api/live/channels": lambda q: backend.live_channels(q.get("genre", "*"), int(q.get("page", 1))),
         "/api/live/link": lambda q: backend.live_link(q["cmd"]),
     }

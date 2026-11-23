@@ -8,6 +8,10 @@ state.json
 # recorded portal requests (for debugging)
 capture.log
 
+# TV app staging (contains device IDs) and packaged output
+tv/build/
+*.ipk
+
 # Python / IDE
 __pycache__/
 *.pyc
