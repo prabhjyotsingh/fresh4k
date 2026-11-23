@@ -794,15 +794,22 @@
     }
   }
 
+  // Keys the UI consumes (normalised). Anything else — volume, mute, power —
+  // is left for the MAG firmware to handle, so we must NOT preventDefault it.
+  var USED = {};
+  [K.LEFT, K.UP, K.RIGHT, K.DOWN, K.OK, K.BACK, K.PGUP, K.PGDN,
+   K.PLAY, K.STOP, K.REW, K.FFWD, K.INFO, K.RED, K.BLUE, 113, 114].forEach(function (c) { USED[c] = 1; });
+
   document.addEventListener('keydown', function (e) {
     if (e.keyCode === 112 && S.zone !== 'search') {   // Red button: reload the portal
       if (P.o) P.stop();
       location.reload();
       return;
     }
+    var nk = normKey(e);
     var h = handlers[S.zone];
-    if (h && h(normKey(e), e) === false) { scheduleLive(); return; }  // typing fell through
-    e.preventDefault();
+    if (h && h(nk, e) === false) { scheduleLive(); return; }  // typing fell through
+    if (USED[nk]) e.preventDefault();                 // only swallow our own keys
   }, false);
   // The MAG on-screen keyboard may insert text without a keydown; cover that too.
   $('search').addEventListener('input', scheduleLive, false);
