@@ -33,22 +33,26 @@ body.z-cats .cat.focus { background: #4f8cff; color: #fff; }
 .cat-head { height: 34px; line-height: 40px; padding: 10px 14px 0; color: #596074;
   font-size: 12px; font-weight: 700; letter-spacing: 2px; white-space: nowrap; overflow: hidden; }
 .cat-head:first-child { padding-top: 2px; }
-#searchbox { display: none; margin-bottom: 10px; }
+/* global Search bar: top of the content area, docked to the bottom while typing */
+#searchbox { display: none; position: absolute; left: 270px; top: 74px; width: 990px; height: 46px; }
 body.tab-search #searchbox { display: block; }
-#search { width: 230px; height: 46px; padding: 0 14px; font-size: 18px; color: #fff; background: #1a1f2b;
+body.z-search #searchbox { top: auto; bottom: 12px; z-index: 5; }
+#search { width: 990px; height: 46px; padding: 0 16px; font-size: 18px; color: #fff; background: #141822;
   border: 2px solid #1a1f2b; border-radius: 8px; outline: none; }
 body.z-search #search { border-color: #4f8cff; }
 
 /* in-category search bar (shown only while browsing a VOD category) */
 #findbar { display: none; position: absolute; left: 270px; top: 74px; width: 990px; height: 42px; }
 body.cansearch #findbar { display: block; }
+/* While typing, dock the field to the bottom; the native keyboard anchors to it. */
+body.z-find #findbar { top: auto; bottom: 12px; z-index: 5; }
 #findbar input { width: 990px; height: 42px; padding: 0 16px; font-size: 16px; color: #fff;
   background: #141822; border: 2px solid #1a1f2b; border-radius: 8px; outline: none; }
 body.z-find #findbar input { border-color: #4f8cff; }
 
 /* grid */
 #grid { position: absolute; left: 270px; top: 74px; width: 990px; height: 610px; overflow: hidden; }
-body.cansearch #grid { top: 126px; height: 558px; }
+body.cansearch #grid, body.tab-search #grid { top: 126px; height: 558px; }
 .tile { position: relative; float: left; width: 176px; margin: 0 18px 18px 0; }
 .poster { position: relative; width: 176px; height: 252px; border-radius: 8px; overflow: hidden; background: #1a1f2b;
   border: 3px solid transparent; }

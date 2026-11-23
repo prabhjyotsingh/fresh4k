@@ -109,7 +109,7 @@
     bodyClass();
     var input = z === 'search' ? $('search') : z === 'find' ? $('find') : null;
     if (input) {
-      input.focus();
+      input.focus();                             // CSS docks the field low; the keyboard follows it
       try { if (MAG && gSTB.ShowVirtualKeyboard) gSTB.ShowVirtualKeyboard(); } catch (e) { /* n/a */ }
     } else {
       var a = document.activeElement;
