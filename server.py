@@ -220,10 +220,11 @@ class Stalker:
         return cats
 
     def vod_list(self, category, page, search=""):
+        # category "*" searches everything; a real id scopes the search to it.
         p = {"type": "vod", "action": "get_ordered_list", "category": category or "*",
              "genre": "*", "p": page, "sortby": "added", "fav": 0}
         if search:
-            p.update(search=search, category="*")
+            p["search"] = search
         return self._page(self.call(p, ttl=600), self._vod_item)
 
     def vod_children(self, movie_id, season_id="0", episode_id="0"):

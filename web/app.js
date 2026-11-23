@@ -107,13 +107,16 @@
   function setZone(z) {
     S.zone = z;
     bodyClass();
-    var input = $('search');
-    if (z === 'search') {
+    var input = z === 'search' ? $('search') : z === 'find' ? $('find') : null;
+    if (input) {
       input.focus();
       try { if (MAG && gSTB.ShowVirtualKeyboard) gSTB.ShowVirtualKeyboard(); } catch (e) { /* n/a */ }
-    } else if (document.activeElement === input) {
-      input.blur();
-      try { if (MAG && gSTB.HideVirtualKeyboard) gSTB.HideVirtualKeyboard(); } catch (e) { /* n/a */ }
+    } else {
+      var a = document.activeElement;
+      if (a && (a.id === 'search' || a.id === 'find')) {
+        a.blur();
+        try { if (MAG && gSTB.HideVirtualKeyboard) gSTB.HideVirtualKeyboard(); } catch (e) { /* n/a */ }
+      }
     }
   }
 
@@ -165,7 +168,8 @@
   function selectTab(i) {
     S.tab = S.tabFocus = i;
     drawTabs();
-    bodyClass();
+    setFlag('cansearch', false);
+    setFlag('scoped', false);
     var id = TABS[i].id;
     S.catTok++;
     if (id === 'vod') loadCats('/api/vod/categories');
@@ -242,7 +246,14 @@
     S.cat = i;
     drawCats();
     var tab = TABS[S.tab].id, id = S.cats[i].id;
-    if (tab === 'vod') setGrid(remote('/api/vod/list', { category: id }), null, 5, 'vod');
+    setFlag('cansearch', tab === 'vod');
+    setFlag('scoped', false);
+    if (tab === 'vod') {
+      S.curCat = S.cats[i];
+      $('find').value = '';
+      $('find').placeholder = 'Search in ' + S.curCat.title;
+      setGrid(remote('/api/vod/list', { category: id }), null, 5, 'vod');
+    }
     else if (tab === 'live') setGrid(remote('/api/live/channels', { genre: id }), null, 4, 'live');
     else if (tab === 'mine') {
       var list = id === 'favs' ? favs() : (function () {
@@ -275,6 +286,37 @@
     drawCats();
     clearTimeout(catTimer);
     catTimer = setTimeout(function () { if (S.cat !== S.catFocus) selectCat(S.catFocus); }, 450);
+  }
+
+  // ------------------------------------------------- in-category search (find)
+  function runFind(q) {
+    setFlag('scoped', true);
+    setGrid(remote('/api/vod/list', { category: S.curCat.id, search: q }),
+      'No results for "' + q + '" in ' + S.curCat.title, 5, 'vod');
+    setZone('grid');
+  }
+  function clearFind() {                          // drop the scoped search, show the whole category
+    setFlag('scoped', false);
+    $('find').value = '';
+    setGrid(remote('/api/vod/list', { category: S.curCat.id }), null, 5, 'vod');
+  }
+  function findKey(k) {
+    var input = $('find');
+    if (k === K.OK) {
+      var q = input.value.replace(/^\s+|\s+$/g, '');
+      if (q) runFind(q);
+    } else if (k === K.DOWN) {
+      if (S.grid.items.length) setZone('grid');
+    } else if (k === K.UP) {
+      setZone('tabs');
+    } else if (k === K.BACK) {
+      var had = !!input.value || S.flags.scoped;
+      if (S.flags.scoped) clearFind();
+      input.value = '';
+      if (!had) setZone('grid');
+    } else {
+      return false;                              // let typing through
+    }
   }
 
   // ---------------------------------------------------------------- search
@@ -378,16 +420,21 @@
 
   function gridKey(k) {
     var g = S.grid, n = g.items.length, i = g.idx, c = g.cols;
-    if (!n) { if (k === K.LEFT || k === K.BACK) leftOfGrid(); else if (k === K.UP) setZone('tabs'); return; }
+    if (!n) {
+      if (k === K.BACK && S.flags.scoped) return clearFind();
+      if (k === K.LEFT || k === K.BACK) leftOfGrid();
+      else if (k === K.UP) setZone(S.flags.cansearch ? 'find' : 'tabs');
+      return;
+    }
     if (k === K.LEFT) { if (i % c === 0) return leftOfGrid(); i--; }
     else if (k === K.RIGHT) { if (i % c !== c - 1 && i + 1 < n) i++; }
-    else if (k === K.UP) { if (i - c >= 0) i -= c; else return setZone('tabs'); }
+    else if (k === K.UP) { if (i - c >= 0) i -= c; else return setZone(S.flags.cansearch ? 'find' : 'tabs'); }
     else if (k === K.DOWN) { if (i + c < n) i += c; else if (Math.floor(i / c) < Math.floor((n - 1) / c)) i = n - 1; }
     else if (k === K.PGDN) i = Math.min(n - 1, i + c * 2);
     else if (k === K.PGUP) i = Math.max(0, i - c * 2);
     else if (k === K.OK) return g.kind === 'live' ? playLive(i) : openDetail(g.items[i]);
     else if (k === K.BLUE && g.kind === 'vod') return toggleFav(g.items[i]);
-    else if (k === K.BACK) return leftOfGrid();
+    else if (k === K.BACK) return S.flags.scoped ? clearFind() : leftOfGrid();
     else return;
     focusTile(i);
   }
@@ -722,7 +769,7 @@
   }
 
   // ------------------------------------------------------------------ keys
-  var handlers = { tabs: tabsKey, cats: catsKey, search: searchKey, grid: gridKey, detail: detailKey, player: playerKey };
+  var handlers = { tabs: tabsKey, cats: catsKey, search: searchKey, find: findKey, grid: gridKey, detail: detailKey, player: playerKey };
   // Map raw key events to K.* (MAG sends media keys as Alt+letter, CH+/- as Tab).
   function normKey(e) {
     var c = e.keyCode;

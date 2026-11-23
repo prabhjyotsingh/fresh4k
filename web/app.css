@@ -39,8 +39,16 @@ body.tab-search #searchbox { display: block; }
   border: 2px solid #1a1f2b; border-radius: 8px; outline: none; }
 body.z-search #search { border-color: #4f8cff; }
 
+/* in-category search bar (shown only while browsing a VOD category) */
+#findbar { display: none; position: absolute; left: 270px; top: 74px; width: 990px; height: 42px; }
+body.cansearch #findbar { display: block; }
+#findbar input { width: 990px; height: 42px; padding: 0 16px; font-size: 16px; color: #fff;
+  background: #141822; border: 2px solid #1a1f2b; border-radius: 8px; outline: none; }
+body.z-find #findbar input { border-color: #4f8cff; }
+
 /* grid */
 #grid { position: absolute; left: 270px; top: 74px; width: 990px; height: 610px; overflow: hidden; }
+body.cansearch #grid { top: 126px; height: 558px; }
 .tile { position: relative; float: left; width: 176px; margin: 0 18px 18px 0; }
 .poster { position: relative; width: 176px; height: 252px; border-radius: 8px; overflow: hidden; background: #1a1f2b;
   border: 3px solid transparent; }
