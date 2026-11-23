@@ -200,18 +200,39 @@
     });
   }
 
+  // Categories may include {header:"..."} dividers that can't be focused.
+  function catSelectable(i) { return i >= 0 && i < S.cats.length && !S.cats[i].header; }
+  function catStep(from, dir) {                 // next selectable index in a direction, or -1
+    var i = from + dir;
+    while (i >= 0 && i < S.cats.length && S.cats[i].header) i += dir;
+    return catSelectable(i) ? i : -1;
+  }
+  function catSnap(i) {                          // nearest selectable to i, or -1
+    for (var d = 0; d < S.cats.length; d++) {
+      if (catSelectable(i + d)) return i + d;
+      if (catSelectable(i - d)) return i - d;
+    }
+    return -1;
+  }
+
   function setCats(cats) {
-    S.cats = cats; S.cat = S.catFocus = 0;
+    S.cats = cats;
     $('cats').scrollTop = 0;
+    var first = catSnap(0);
+    S.cat = S.catFocus = first < 0 ? 0 : first;
     drawCats();
-    if (cats.length) selectCat(0);
+    if (first >= 0) selectCat(first);
   }
 
   function drawCats() {
     var h = '';
     for (var i = 0; i < S.cats.length; i++) {
-      h += '<div class="cat' + (i === S.cat ? ' sel' : '') + (i === S.catFocus ? ' focus' : '') + '" id="c' + i + '">' +
-        esc(S.cats[i].title) + '</div>';
+      if (S.cats[i].header) {
+        h += '<div class="cat-head">' + esc(S.cats[i].header) + '</div>';
+      } else {
+        h += '<div class="cat' + (i === S.cat ? ' sel' : '') + (i === S.catFocus ? ' focus' : '') +
+          '" id="c' + i + '">' + esc(S.cats[i].title) + '</div>';
+      }
     }
     $('cats').innerHTML = h;
     ensureVisible($('cats'), $('c' + S.catFocus), 42);
@@ -237,11 +258,14 @@
   function catsKey(k) {
     var n = S.cats.length;
     if (k === K.UP) {
-      if (S.catFocus > 0) S.catFocus--; else return setZone('tabs');
+      var p = catStep(S.catFocus, -1);
+      if (p < 0) return setZone('tabs');
+      S.catFocus = p;
     } else if (k === K.DOWN) {
-      if (S.catFocus < n - 1) S.catFocus++;
-    } else if (k === K.PGDN) S.catFocus = Math.min(n - 1, S.catFocus + 10);
-    else if (k === K.PGUP) S.catFocus = Math.max(0, S.catFocus - 10);
+      var nx = catStep(S.catFocus, 1);
+      if (nx >= 0) S.catFocus = nx;
+    } else if (k === K.PGDN) { var sd = catSnap(Math.min(n - 1, S.catFocus + 10)); if (sd >= 0) S.catFocus = sd; }
+    else if (k === K.PGUP) { var su = catSnap(Math.max(0, S.catFocus - 10)); if (su >= 0) S.catFocus = su; }
     else if (k === K.RIGHT || k === K.OK) {
       clearTimeout(catTimer);
       if (S.cat !== S.catFocus) selectCat(S.catFocus);

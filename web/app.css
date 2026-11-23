@@ -30,6 +30,9 @@ body.z-tabs .tab.focus { background: #4f8cff; color: #fff; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cat.sel { color: #fff; background: #1a1f2b; }
 body.z-cats .cat.focus { background: #4f8cff; color: #fff; }
+.cat-head { height: 34px; line-height: 40px; padding: 10px 14px 0; color: #596074;
+  font-size: 12px; font-weight: 700; letter-spacing: 2px; white-space: nowrap; overflow: hidden; }
+.cat-head:first-child { padding-top: 2px; }
 #searchbox { display: none; margin-bottom: 10px; }
 body.tab-search #searchbox { display: block; }
 #search { width: 230px; height: 46px; padding: 0 14px; font-size: 18px; color: #fff; background: #1a1f2b;

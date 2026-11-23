@@ -30,6 +30,11 @@ config.json    # your box's MAC + device IDs (not committed; see config.example.
      `http://<this-host>:<port>/stalker_portal/c/` once; the server proxies the
      real portal and records the exact login parameters to `capture.log`.
    - `timezone` — e.g. `America/Toronto`.
+   - `vod_categories` (optional) — a flat list of category IDs to show in the
+     Movies & Series menu, in order. Empty/omitted shows every category.
+   - `vod_groups` (optional) — organise the menu under section headers, e.g.
+     `[{"title": "HINDI", "ids": ["19", "15"]}, ...]`. Takes precedence over
+     `vod_categories`. Headers are shown as non-selectable dividers.
 
 2. Run it:
 

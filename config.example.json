@@ -2,5 +2,14 @@
   "portal": "http://fresh4k.cc",
   "mac": "00:1A:79:XX:XX:XX",
   "port": 8080,
-  "timezone": "Europe/London"
+  "timezone": "Europe/London",
+
+  "_comment_menu": "Choose ONE way to shape the Movies & Series menu, or omit both to show every category:",
+  "_comment_flat": "vod_categories: a flat list of category IDs, in the order to show them.",
+  "vod_categories": [],
+  "_comment_groups": "vod_groups: sections with headers. Takes precedence over vod_categories.",
+  "vod_groups": [
+    { "title": "ENGLISH", "ids": ["1", "10"] },
+    { "title": "HINDI", "ids": ["19", "15"] }
+  ]
 }

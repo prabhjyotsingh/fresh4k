@@ -43,6 +43,13 @@ DEFAULTS = {
     "image_desc": "2.20.12-544",
     "user_agent": ("Mozilla/5.0 (Unknown; Linux) AppleWebKit/538.1 (KHTML, like Gecko) "
                    "MAG200 stbapp ver: 4 rev: 734 Mobile Safari/538.1"),
+    # Optional: category IDs to show in Movies & Series, in this order.
+    # Empty list = show every category the provider offers.
+    "vod_categories": [],
+    # Optional: group the menu under section headers, e.g.
+    # [{"title": "HINDI", "ids": ["19", "15"]}, ...]. Takes precedence over
+    # vod_categories. Empty = no grouping.
+    "vod_groups": [],
     "mock": False,
 }
 
@@ -195,8 +202,22 @@ class Stalker:
     # -- VOD ---------------------------------------------------------------
     def vod_categories(self):
         js = self.call({"type": "vod", "action": "get_categories"}, ttl=3600)
-        return [{"id": str(c["id"]), "title": c["title"]} for c in js or []
+        cats = [{"id": str(c["id"]), "title": c["title"]} for c in js or []
                 if str(c.get("id")) != "*"]
+        by_id = {c["id"]: c for c in cats}
+        groups = self.cfg.get("vod_groups") or []
+        if groups:                                   # emit section headers + their categories
+            out = []
+            for g in groups:
+                members = [by_id[str(i)] for i in g.get("ids", []) if str(i) in by_id]
+                if members:
+                    out.append({"header": g.get("title", "")})
+                    out.extend(members)
+            return out
+        wanted = [str(x) for x in self.cfg.get("vod_categories") or []]
+        if wanted:                                   # keep only these, in this order
+            return [by_id[i] for i in wanted if i in by_id]
+        return cats
 
     def vod_list(self, category, page, search=""):
         p = {"type": "vod", "action": "get_ordered_list", "category": category or "*",
