@@ -1,18 +1,15 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# Local, per-box or generated — never commit these.
+# (Keep comments on their own lines: git has no trailing-comment syntax.)
 
-# Other files and folders
-.settings/
+# your MAG's MAC / device IDs
+config.json
+# favorites and resume positions
+state.json
+# recorded portal requests (for debugging)
+capture.log
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
-
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# Python / IDE
+__pycache__/
+*.pyc
+.idea/
+.vscode/
