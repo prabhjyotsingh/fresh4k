@@ -111,3 +111,11 @@ body.live #osd-bar, body.live #osd-time { display: none; }
 #toast { display: none; position: absolute; left: 490px; top: 320px; width: 300px; padding: 18px; text-align: center;
   background: rgba(20,24,33,.95); border-radius: 10px; font-size: 18px; }
 #toast.on { display: block; }
+
+/* volume indicator, right side */
+#volosd { display: none; position: absolute; right: 46px; top: 180px; width: 64px; height: 360px;
+  background: rgba(8,10,14,.85); border-radius: 12px; }
+#volosd.on { display: block; }
+#voltrack { position: absolute; left: 28px; top: 28px; width: 8px; height: 268px; background: #333a48; border-radius: 4px; }
+#volfill { position: absolute; left: 0; bottom: 0; width: 8px; background: #4f8cff; border-radius: 4px; }
+#voltxt { position: absolute; left: 0; bottom: 18px; width: 64px; text-align: center; color: #fff; font-size: 22px; }

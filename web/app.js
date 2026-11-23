@@ -802,18 +802,26 @@
 
   // Volume: this firmware delivers the keys to us (107/109, mute 192+Alt) but
   // doesn't act on them, so we drive the player's volume directly.
+  var volTimer;
+  function showVol(v, muted) {
+    $('volfill').style.height = (muted ? 0 : v) + '%';
+    $('voltxt').innerHTML = muted ? 'mute' : v;
+    $('volosd').className = 'on';
+    clearTimeout(volTimer);
+    volTimer = setTimeout(function () { $('volosd').className = ''; }, 1500);
+  }
   function setVol(d) {
     if (!MAG) return;
     try {
       var v = Math.max(0, Math.min(100, (parseInt(gSTB.GetVolume(), 10) || 0) + d));
       gSTB.SetMute(false);
       gSTB.SetVolume(v);
-      toast(v === 0 ? 'Volume 0' : 'Volume ' + v);
+      showVol(v, false);
     } catch (e) { /* n/a */ }
   }
   function toggleMute() {
     if (!MAG) return;
-    try { var m = !gSTB.GetMute(); gSTB.SetMute(m); toast(m ? 'Muted' : 'Unmuted'); } catch (e) { /* n/a */ }
+    try { var m = !gSTB.GetMute(); gSTB.SetMute(m); showVol(parseInt(gSTB.GetVolume(), 10) || 0, m); } catch (e) { /* n/a */ }
   }
 
   document.addEventListener('keydown', function (e) {
