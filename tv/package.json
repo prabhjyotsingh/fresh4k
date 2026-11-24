@@ -4,8 +4,9 @@
   "private": true,
   "description": "Build tools for the IP TV LG webOS app (not shipped to the TV)",
   "scripts": {
-    "stage": "python3 build.py",
-    "package": "npm run stage && cd build && ares-package .",
+    "clean": "rm -rf build *.ipk",
+    "stage": "npm run clean && python3 build.py",
+    "package": "npm run stage && ares-package -o . build",
     "install-tv": "npm run package && ares-install --device tv com.fresh4k.app_0.1.0_all.ipk && ares-launch --device tv com.fresh4k.app"
   },
   "devDependencies": {

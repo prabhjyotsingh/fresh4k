@@ -13,8 +13,18 @@ build step; the server is Python 3.7+ with no dependencies.
 ```
 server.py      # HTTP server: serves web/, exposes /api/*, logs in to the provider
 web/           # the UI (index.html, app.css, app.js) — vanilla JS, no framework
+tv/            # LG webOS TV build (standalone app); see tv/README.md
 config.json    # your box's MAC + device IDs (not committed; see config.example.json)
 ```
+
+## Prerequisites
+
+For the MAG server: Python 3.7+. Nothing to install beyond that.
+
+For the LG TV app, the build machine also needs Python 3.7+, Node.js 18+ with
+npm, and the webOS CLI (`@webos-tools/cli` 3.2.6). The full list, plus how to
+turn on Developer Mode on the TV and register it with the build machine, is in
+[tv/README.md](tv/README.md).
 
 ## Setup
 
@@ -25,10 +35,30 @@ config.json    # your box's MAC + device IDs (not committed; see config.example.
    ```
 
    - `mac` — the box's device MAC (MAG: `00:1A:79:…`, from Settings → Device info).
-   - `device_id` / `device_id2` — the UID values the box sends at login. If the
-     provider rejects a MAC-only login, point the box's portal at
-     `http://<this-host>:<port>/stalker_portal/c/` once; the server proxies the
-     real portal and records the exact login parameters to `capture.log`.
+     Use the box's `00:1A:79:…` MAC, not the Wi-Fi adapter's own MAC, which the
+     portal rejects.
+   - `sn`, `device_id`, `device_id2`, `hw_version`, `hw_version_2`, `signature`
+     — the login parameters the box sends. Get them from a capture, below.
+     `signature` may stay empty.
+
+   **Getting the login values (capture)**
+
+   1. Start the server, then point the box's Portal 1 at
+      `http://<this-host>:<port>/stalker_portal/c/` and reboot the box.
+   2. The server proxies the real portal and writes every request to
+      `capture.log`, including the full query string. Find the login request:
+
+      ```
+      grep 'action=get_profile' capture.log | tail -1
+      ```
+
+   3. Copy the values for `sn`, `device_id`, `device_id2`, `hw_version`,
+      `hw_version_2`, and `signature` from that line into `config.json`.
+      `device_id` and `device_id2` are the `device_id=` and `device_id2=` parameters.
+   4. Set Portal 1 back to this server, and keep `capture.log` out of git (it is
+      already in `.gitignore`).
+
+   Don't paste these values into the README, a commit, or a chat. They identify your box.
    - `timezone` — e.g. `America/Toronto`.
    - `vod_categories` (optional) — a flat list of category IDs to show in the
      Movies & Series menu, in order. Empty/omitted shows every category.
