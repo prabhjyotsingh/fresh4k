@@ -103,6 +103,7 @@ function vodItem(x) {
   return {
     id: String(x.id),
     category_id: String(x.category_id || ''),
+    warn: /PRE\s*DVD/i.test(x.name || x.o_name || '') ? 'PREDVD' : '',
     name: x.name || x.o_name || '',
     year: x.year || '',
     rating: x.rating_imdb || x.rating_kinopoisk || '',

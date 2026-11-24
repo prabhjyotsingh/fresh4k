@@ -29,6 +29,8 @@ WEB = os.path.join(ROOT, "web")
 # Adult content is locked by default. Same rule as tv/app/service/services.js:
 # categories (and live genres) whose title matches this are hidden everywhere.
 ADULT_TITLE = re.compile(r"adult|18\+|xxx|porn", re.I)
+# Titles the portal marks as pre-release DVD prints, e.g. "Max (PREDVD)" or "(PRE DVD)".
+PREDVD_TITLE = re.compile(r"PRE\s*DVD", re.I)
 
 
 def group_live(genres):
@@ -223,6 +225,7 @@ class Stalker:
         return {
             "id": str(x.get("id")),
             "category_id": str(x.get("category_id") or ""),
+            "warn": "PREDVD" if PREDVD_TITLE.search(x.get("name") or x.get("o_name") or "") else "",
             "name": x.get("name") or x.get("o_name") or "",
             "year": x.get("year") or "",
             "rating": x.get("rating_imdb") or x.get("rating_kinopoisk") or "",

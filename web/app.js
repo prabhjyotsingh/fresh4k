@@ -47,7 +47,14 @@
     for (var k in params) if (params.hasOwnProperty(k)) out.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
     return out.join('&');
   }
+  // Small spinner in the corner while any request is pending (not in the middle of the screen).
+  var pending = 0;
+  function busy(on) { pending = Math.max(0, pending + (on ? 1 : -1)); setFlag('busy', pending > 0); }
   function api(path, params, cb) {
+    busy(true);
+    apiRaw(path, params, function (err, data) { busy(false); cb(err, data); });
+  }
+  function apiRaw(path, params, cb) {
     if (window.fkTransport) return fkTransport.api(path, params || {}, cb);   // TV build only
     var x = new XMLHttpRequest();
     x.open('GET', path + '?' + qs(params || {}), true);
@@ -472,6 +479,7 @@
     return '<div class="tile" id="t' + i + '"><div class="poster"><span class="ph">' + name + '</span>' +
       (it.poster ? '<img src="' + esc(it.poster) + '" onerror="this.style.display=\'none\'">' : '') +
       (it.rating ? '<span class="badge">★ ' + esc(it.rating) + '</span>' : '') +
+      (it.warn ? '<span class="warn">' + esc(it.warn) + '</span>' : '') +
       (it.is_series ? '<span class="badge s">SERIES</span>' : '') + prog +
       '</div><div class="name">' + name + (it.year ? ' (' + esc(it.year) + ')' : '') + '</div></div>';
   }
@@ -505,7 +513,7 @@
       return;
     }
     if (k === K.LEFT) { if (i % c === 0) return leftOfGrid(); i--; }
-    else if (k === K.RIGHT) { if (i % c !== c - 1 && i + 1 < n) i++; }
+    else if (k === K.RIGHT) { if (i + 1 < n) i++; }     // past the end of a row, wrap to the next row's first tile
     else if (k === K.UP) { if (i - c >= 0) i -= c; else return setZone(S.flags.cansearch ? 'find' : 'tabs'); }
     else if (k === K.DOWN) { if (i + c < n) i += c; else if (Math.floor(i / c) < Math.floor((n - 1) / c)) i = n - 1; }
     else if (k === K.PGDN) i = Math.min(n - 1, i + c * 2);
@@ -740,6 +748,11 @@
       if (o.kind === 'vod') saveProgress(o, P.len() || 1, P.len() || 1);
       if (o.next) { P.stop(); o.next(); } else P.close();
     } else if (code === 5) {                  // could not open
+      if (P.o.kind === 'live' && !P.started) {  // live channel with no stream: skip to the next one
+        var idx = P.o.idx;
+        P.stop();
+        return liveSkip(idx, 'playback failed');
+      }
       // Say when it failed: before the stream started, or after (e.g. during a resume seek).
       var when = !P.started ? 'while opening' : (P.resumeTo != null ? 'while resuming at ' + fmt(P.resumeTo) : 'during playback');
       toast('Playback failed ' + when);
@@ -1011,9 +1024,28 @@
     if (!ch) return;
     if (S.zone === 'grid') focusTile(i);
     api('/api/live/link', { cmd: ch.cmd }, function (err, res) {
-      if (err || !res.url) return toast(err || 'Channel unavailable');
+      if (err || !res.url) return liveSkip(i, err || 'Channel unavailable');
+      skipRun = 0;
       P.open(res.url, { kind: 'live', label: ch.number + '  ' + ch.name, idx: i });
     });
+  }
+
+  // A channel with no working stream: say so and move on to the next channel.
+  // Gives up after MAX_SKIP channels in a row, so a whole group with no streams
+  // doesn't loop forever.
+  var skipRun = 0, MAX_SKIP = 5;
+  function liveSkip(i, why) {
+    var n = S.grid.items.length;
+    if (skipRun >= MAX_SKIP || i + 1 >= n) {
+      skipRun = 0;
+      toast('No working channel found: ' + why);
+      if (P.o) P.close();
+      return;
+    }
+    skipRun++;
+    toast('No stream on this channel, trying the next one…');
+    if (P.o) P.o.idx = i + 1;
+    playLive(i + 1);
   }
 
   function zap(delta) {
