@@ -696,6 +696,7 @@
 
   P.open = function (url, o) {
     if (window.fkTransport) fkTransport.subtitleOff();   // no subtitle carries over to the next title
+    clearTimeout(P.subTimer);                            // a pending delay-apply must not fire for the new title
     if (P.o) P.stop();
     if (S.zone !== 'player') P.prevZone = S.zone;
     P.o = o; P.url = url; P.paused = false; P.started = false; P.seekTo = null; P.resumeTo = null;
@@ -708,8 +709,11 @@
     setFlag('playing', true);
     setFlag('live', o.kind === 'live');
     P.osd(true, 'Loading…');
-    if (MAG) gSTB.Play('ffmpeg ' + url);
-    else { video.src = url; video.play(); }
+    if (MAG) {
+      // The MAG firmware keeps the last external/PID subtitle on across Play(), so switch it off here.
+      try { gSTB.SetSubtitles(false); } catch (e) { /* n/a */ }
+      gSTB.Play('ffmpeg ' + url);
+    } else { video.src = url; video.play(); }
     clearInterval(P.tick);
     P.tick = setInterval(function () {
       if (!P.started && P.pos() > 0) P.onStarted();
@@ -943,13 +947,14 @@
   }
   function applySub(sel, announce) {
     if (window.fkTransport) return applySubTv(sel, announce);         // warm the server merge, then hand the SRT to the player
-    var url = subUrl(sel);
+    var url = subUrl(sel), streamUrl = P.url;
     if (announce) toast('Loading subtitles…', true);
     var x = new XMLHttpRequest();
     x.open('GET', url, true);
     x.onreadystatechange = function () {
       if (x.readyState !== 4) return;
       if (announce) hideToast();
+      if (P.url !== streamUrl) return;     // title changed while loading: don't attach it to the new one
       if (x.status !== 200) { toast('Could not load subtitles'); return; }
       try {
         gSTB.LoadExternalSubtitles(url);
@@ -976,6 +981,7 @@
       if (it.sub === -1) {
         try { gSTB.SetSubtitles(false); } catch (e) { /* n/a */ }
         if (window.fkTransport) fkTransport.subtitleOff();
+        clearTimeout(P.subTimer);                // cancel a pending delay-apply for the track just turned off
         P.subSel = -1;
         rebuildMenu();
       }
