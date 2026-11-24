@@ -1144,7 +1144,42 @@
   scale();
   window.addEventListener('resize', scale, false);
   clock(); setInterval(clock, 15000);
+  // Mouse / Magic Remote pointer: clicks only, no hover, so the pointer never
+  // moves the highlight away from the remote's focus. Each click runs the same
+  // action as pressing OK on that item.
+  function indexOfId(el, prefix) {
+    for (var n = el; n && n !== document.body; n = n.parentNode) {
+      if (n.id && n.id.indexOf(prefix) === 0 && /^\d+$/.test(n.id.slice(prefix.length))) return +n.id.slice(prefix.length);
+    }
+    return -1;
+  }
+  function bindMouse() {
+    $('grid').addEventListener('click', function (e) {
+      var i = indexOfId(e.target, 't'); if (i < 0) return;
+      if (S.zone !== 'grid') setZone('grid');
+      focusTile(i);
+      gridKey(K.OK);
+    }, false);
+    $('cats').addEventListener('click', function (e) {
+      var i = indexOfId(e.target, 'c'); if (i < 0 || !catSelectable(i)) return;
+      if (S.zone !== 'cats') setZone('cats');
+      S.catFocus = i; drawCats();
+      catsKey(K.OK);
+    }, false);
+    $('d-list').addEventListener('click', function (e) {
+      var i = indexOfId(e.target, 'a'); if (i < 0 || !S.detail) return;
+      S.detail.idx = i; drawDetail();
+      detailKey(K.OK);
+    }, false);
+    $('tabs').addEventListener('click', function (e) {
+      for (var i = 0, n = $('tabs').children; i < n.length; i++) {
+        if (n[i] === e.target || (n[i].contains && n[i].contains(e.target))) { selectTab(i); return; }
+      }
+    }, false);
+  }
+
   P.init();
+  bindMouse();
   bodyClass();
   selectTab(0);
   setZone('cats');
