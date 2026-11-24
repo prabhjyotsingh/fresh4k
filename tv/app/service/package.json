@@ -1,7 +1,10 @@
 {
   "name": "com.fresh4k.app.service",
   "version": "0.1.0",
-  "description": "fresh4k portal service",
+  "description": "IP TV portal service (runs on the LG TV)",
   "main": "services.js",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "engines": {
+    "node": "12.21.0"
+  }
 }

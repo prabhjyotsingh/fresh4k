@@ -228,9 +228,14 @@
     S.cats = cats;
     $('cats').scrollTop = 0;
     var first = catSnap(0);
+    if (cats.length && S.restoreCatIdx != null) {       // keep the cursor where it was (PIN unlock/lock)
+      var keep = catSnap(S.restoreCatIdx);
+      if (keep >= 0) first = keep;
+      S.restoreCatIdx = null;
+    }
     S.cat = S.catFocus = first < 0 ? 0 : first;
     drawCats();
-    if (first >= 0) selectCat(first);
+    if (first >= 0 && !(cats[first] && cats[first].adult)) selectCat(first);
   }
 
   function drawCats() {
@@ -286,6 +291,7 @@
       api('/api/adult/lock', {}, function (err) {
         if (err) return toast(err);
         toast('Adult content locked');
+        S.restoreCatIdx = S.catFocus;
         selectTab(S.tab);
       });
       return;
@@ -305,7 +311,7 @@
       pinOk = false;
       input.value = '';
       setZone('cats');
-      if (ok) { toast('Adult content unlocked'); selectTab(S.tab); }
+      if (ok) { toast('Adult content unlocked'); S.restoreCatIdx = S.catFocus; selectTab(S.tab); }
       return;
     }
     if (k === K.OK) {
