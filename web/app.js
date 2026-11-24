@@ -687,7 +687,9 @@
     P.o = o; P.url = url; P.paused = false; P.started = false; P.seekTo = null; P.resumeTo = null;
     // Track selections (subtitles off by default). hlsSubs is null until the menu is first
     // opened: we don't ask the provider for the track list during normal playback.
-    P.subSel = -1; P.subShift = 0; P.audPid = null; P.hlsSubs = null;
+    // TV: portal streams start their video 600 s into the timeline, while the
+    // subtitles start at 0, so the TV starts 600 s early. The Delay row adjusts from there.
+    P.subSel = -1; P.subShift = window.fkTransport ? -600 : 0; P.audPid = null; P.hlsSubs = null;
     setZone('player');
     setFlag('playing', true);
     setFlag('live', o.kind === 'live');
@@ -741,6 +743,10 @@
 
   P.onStarted = function () {
     P.started = true;
+    // TV: start loading the subtitles now, so the Green menu opens quickly.
+    if (window.fkTransport && P.o && P.o.kind === 'vod' && P.url) {
+      fkTransport.api('/api/vod/subs', { url: P.url }, function () {});
+    }
     P.resumeTo = P.o.start > 5 ? P.o.start : null;
     P.resumeTries = 0;
     P.osd(true);
@@ -822,7 +828,7 @@
 
   function delayLabel() {
     var v = P.subShift || 0;
-    return 'Delay ' + (v > 0 ? '+' : '') + v.toFixed(2) + 's  ◀ ▶';
+    return 'Delay ' + (v > 0 ? '+' : '') + v.toFixed(2) + 's   LEFT/RIGHT 0.25s   CH 30s';
   }
   function buildMenuItems() {
     var items = [{ head: 'AUDIO' }];
@@ -902,12 +908,15 @@
       encodeURIComponent(P.url) + '&track=' + encodeURIComponent(P.hlsSubs[sel].name) +
       '&shift=' + (P.subShift || 0) + '&_=' + (++subSeq);
   }
+  var subSeqTv = 0;
   function applySubTv(sel, announce) {         // TV: merged WebVTT attached as a <track>
     var track = P.hlsSubs[sel].name, shift = P.subShift || 0, url = P.url;
+    if (window.console) console.log('[subtitles] track "' + track + '" with delay ' + shift + ' s');
     if (announce) toast('Loading subtitles…', true);
+    var seq = ++subSeqTv;                       // only the newest request may apply
     fkTransport.subtitle(url, track, shift, function (err, vtt) {
       if (announce) hideToast();
-      if (P.url !== url) return;                // stopped or switched while loading
+      if (seq !== subSeqTv || P.url !== url) return;   // older delay, or stopped/switched
       if (err || !vtt || !fkTransport.setSubtitles(vtt)) { toast('Could not load subtitles'); return; }
       P.subSel = sel;
       if (announce) { toast((P.hlsSubs[sel].name || 'Subtitles') + ' on'); rebuildMenu(); }
@@ -935,6 +944,7 @@
   function adjustDelay(d) {
     if (P.subSel < 0) return;
     P.subShift = Math.round((P.subShift + d) * 100) / 100;
+    if (window.console) console.log('[subtitles] delay set to ' + P.subShift + ' s');
     drawMenu();
     clearTimeout(P.subTimer);
     P.subTimer = setTimeout(function () { applySub(P.subSel, false); }, 400);
@@ -957,6 +967,9 @@
   function pmenuKey(k) {
     var m = P.menu, it = m.items[m.idx];
     if (k === K.BACK || k === K.GREEN || k === K.INFO) return P.closeMenu();
+    if (it && it.kind === 'delay' && (k === K.PGUP || k === K.PGDN)) {
+      return adjustDelay(k === K.PGDN ? 30 : -30);         // CH+/CH-: 30 s steps
+    }
     if (it && it.kind === 'delay' && (k === K.LEFT || k === K.RIGHT)) {
       return adjustDelay(k === K.LEFT ? -0.25 : 0.25);     // ◀ ▶ nudge subtitle timing
     }

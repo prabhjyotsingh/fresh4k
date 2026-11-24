@@ -456,7 +456,7 @@ function fetchAll(items, fn, cb) {
   var results = new Array(items.length), next = 0, active = 0, done = 0;
   if (!items.length) return cb(results);
   (function pump() {
-    while (active < 8 && next < items.length) {
+    while (active < 16 && next < items.length) {
       (function (i) {
         active++;
         fn(items[i], function (r) {
@@ -470,10 +470,24 @@ function fetchAll(items, fn, cb) {
   })();
 }
 
-// server.py _subtitle_cues(): all cues of one subtitle track of a stream.
+// All cues of one subtitle track. Loads once: callers that ask while a load is
+// running wait for the same result instead of downloading the segments again.
+var subWaiting = {};
 function subtitleCues(streamUrl, track, cb) {
   var key = streamUrl.split('?')[0] + '|' + track;
   if (subCache[key]) return cb(null, subCache[key]);
+  if (subWaiting[key]) return subWaiting[key].push(cb);
+  subWaiting[key] = [cb];
+  loadCues(streamUrl, track, function (err, cues) {
+    var waiting = subWaiting[key] || [];
+    delete subWaiting[key];
+    if (!err) subCache[key] = cues;
+    waiting.forEach(function (f) { f(err, cues); });
+  });
+}
+
+// server.py _subtitle_cues(): fetch and merge one track's segments (no caching here).
+function loadCues(streamUrl, track, cb) {
   fetchText(streamUrl, function (err, text) {
     if (err) return cb(err);
     var subs = subsFromMaster(text);
@@ -495,8 +509,7 @@ function subtitleCues(streamUrl, track, cb) {
       }, function (parts) {
         var cues = [];
         parts.forEach(function (p) { cues = cues.concat(p); });
-        subCache[key] = cues;
-        cb(null, cues);
+        cb(null, cues);            // subtitleCues() caches the result
       });
     });
   });
@@ -528,7 +541,10 @@ function toVtt(cues, shift) {
 function vodSubs(streamUrl, cb) {
   fetchText(streamUrl, function (err, text) {
     if (err) return cb(null, []);
-    cb(null, subsFromMaster(text).map(function (s) { return { name: s.name, lang: s.lang }; }));
+    var subs = subsFromMaster(text);
+    // Start loading the first track now (in the background), so Green opens fast.
+    if (subs.length) subtitleCues(streamUrl, subs[0].name, function () {});
+    cb(null, subs.map(function (s) { return { name: s.name, lang: s.lang }; }));
   });
 }
 
