@@ -1113,14 +1113,32 @@
     try { var m = !gSTB.GetMute(); gSTB.SetMute(m); showVol(parseInt(gSTB.GetVolume(), 10) || 0, m); } catch (e) { /* n/a */ }
   }
 
+  // Key-code readout (MAG/desktop only): shows each key's code in a yellow box for
+  // 4 seconds, for finding remote and keyboard codes. Remove this block when done.
+  /*
+  var keyDbg = null, keyDbgTimer;
+  document.addEventListener('keydown', function (e) {
+    if (window.fkTransport) return;                    // the TV build has its own readout
+    if (!keyDbg) {
+      keyDbg = document.createElement('div');
+      keyDbg.style.cssText = 'position:fixed;left:20px;bottom:20px;z-index:9999;font:28px monospace;' +
+        'background:rgba(0,0,0,.8);color:#ff0;padding:8px 14px;border-radius:6px;display:none';
+      document.body.appendChild(keyDbg);
+    }
+    keyDbg.textContent = 'key ' + e.keyCode + (e.key ? '  ' + e.key : '');
+    keyDbg.style.display = 'block';
+    clearTimeout(keyDbgTimer);
+    keyDbgTimer = setTimeout(function () { keyDbg.style.display = 'none'; }, 4000);
+  }, false);
+  */
   document.addEventListener('keydown', function (e) {
     if ((e.keyCode === 112 || e.keyCode === 403) && S.zone !== 'search') {   // Red button (403 on webOS): reload the portal
       if (P.o) P.stop();
       location.reload();
       return;
     }
-    if (e.keyCode === 107) { setVol(5); e.preventDefault(); return; }   // Volume Up
-    if (e.keyCode === 109) { setVol(-5); e.preventDefault(); return; }  // Volume Down
+    if (e.keyCode === 107 || e.keyCode === 187 || e.keyCode === 61) { setVol(5); e.preventDefault(); return; }
+    if (e.keyCode === 109 || e.keyCode === 189 || e.keyCode === 173) { setVol(-5); e.preventDefault(); return; }
     if (e.keyCode === 192 && e.altKey) { toggleMute(); e.preventDefault(); return; }  // Mute
     var nk = normKey(e);
     var h = handlers[S.zone];
