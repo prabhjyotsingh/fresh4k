@@ -44,25 +44,20 @@ function request(params, cb) {
 }
 
 // Handshake + get_profile, like server.py Stalker.login().
+// Only device_id and device_id2 are required. sn, hw_version, hw_version_2 and
+// signature are sent only when set in config.json.
 function login(cb) {
   token = null;
   request({ type: 'stb', action: 'handshake', token: '', prehash: 'false' }, function (err, js) {
     if (err) return cb(err);
     if (!js || !js.token) return cb('handshake returned no token');
     token = js.token;
-    var metrics = JSON.stringify({ mac: cfg.mac, sn: cfg.sn, model: cfg.model, type: 'STB',
-      uid: cfg.device_id2, random: js.random || '' });
-    request({
-      type: 'stb', action: 'get_profile', hd: 1,
-      ver: 'ImageDescription: ' + cfg.image_desc + '; PORTAL version: 5.6.10; API Version: JS API version: 349',
-      num_banks: 1, sn: cfg.sn, stb_type: cfg.model, client_type: 'STB',
-      image_version: cfg.image_version, video_out: 'hdmi',
-      device_id: cfg.device_id, device_id2: cfg.device_id2,
-      signature: cfg.signature, auth_second_step: 0,
-      hw_version: cfg.hw_version, not_valid_token: 0, metrics: metrics,
-      hw_version_2: cfg.hw_version_2, timestamp: Math.floor(Date.now() / 1000),
-      api_signature: 241, prehash: 'false'
-    }, function (err2, profile) {
+    var params = { type: 'stb', action: 'get_profile', stb_type: cfg.model,
+      device_id: cfg.device_id, device_id2: cfg.device_id2 };
+    ['sn', 'hw_version', 'hw_version_2', 'signature'].forEach(function (k) {
+      if (cfg[k]) params[k] = cfg[k];
+    });
+    request(params, function (err2, profile) {
       if (err2) return cb(err2);
       var status = String((profile && profile.status) !== undefined ? profile.status : '0');
       if (status !== '0') return cb('login refused, status ' + status + ': ' + ((profile && profile.msg) || ''));

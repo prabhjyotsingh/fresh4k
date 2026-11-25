@@ -37,9 +37,11 @@ turn on Developer Mode on the TV and register it with the build machine, is in
    - `mac` — the box's device MAC (MAG: `00:1A:79:…`, from Settings → Device info).
      Use the box's `00:1A:79:…` MAC, not the Wi-Fi adapter's own MAC, which the
      portal rejects.
-   - `sn`, `device_id`, `device_id2`, `hw_version`, `hw_version_2`, `signature`
-     — the login parameters the box sends. Get them from a capture, below.
-     `signature` may stay empty.
+   - `device_id`, `device_id2` — **required**. The portal refuses the login
+     without them. Get them from a capture, below.
+   - `sn`, `hw_version`, `hw_version_2`, `signature` — **optional**, not in the
+     example config. Tested: the portal accepts a login without them. The server
+     sends them only if you add them to `config.json`.
 
    **Getting the login values (capture)**
 
@@ -52,9 +54,8 @@ turn on Developer Mode on the TV and register it with the build machine, is in
       grep 'action=get_profile' capture.log | tail -1
       ```
 
-   3. Copy the values for `sn`, `device_id`, `device_id2`, `hw_version`,
-      `hw_version_2`, and `signature` from that line into `config.json`.
-      `device_id` and `device_id2` are the `device_id=` and `device_id2=` parameters.
+   3. Copy the values for `device_id` and `device_id2` (the `device_id=` and
+      `device_id2=` parameters) from that line into `config.json`.
    4. Set Portal 1 back to this server, and keep `capture.log` out of git (it is
       already in `.gitignore`).
 

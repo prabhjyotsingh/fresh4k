@@ -26,9 +26,7 @@ DEFAULTS = {
     "portal": "http://fresh4k.cc",
     "api_path": "/stalker_portal/server/load.php",
     "mac": "", "timezone": "Europe/London", "model": "MAG544", "link": "WiFi",
-    "sn": "", "device_id": "", "device_id2": "", "signature": "",
-    "hw_version": "", "hw_version_2": "", "image_version": "220",
-    "image_desc": "2.20.12-544",
+    "device_id": "", "device_id2": "",
     "user_agent": ("Mozilla/5.0 (Unknown; Linux) AppleWebKit/538.1 (KHTML, like Gecko) "
                    "MAG200 stbapp ver: 4 rev: 734 Mobile Safari/538.1"),
 }

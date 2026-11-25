@@ -80,8 +80,6 @@ DEFAULTS = {
     "signature": "",
     "hw_version": "",
     "hw_version_2": "",
-    "image_version": "220",
-    "image_desc": "2.20.12-544",
     "user_agent": ("Mozilla/5.0 (Unknown; Linux) AppleWebKit/538.1 (KHTML, like Gecko) "
                    "MAG200 stbapp ver: 4 rev: 734 Mobile Safari/538.1"),
     # Optional: category IDs to show in Movies & Series, in this order.
@@ -158,26 +156,22 @@ class Stalker:
         return data.get("js") if isinstance(data, dict) else data
 
     def login(self):
-        """Handshake + get_profile, mirroring what the MAG's own portal sends."""
+        """Handshake + get_profile. Only device_id and device_id2 are required.
+
+        sn, hw_version, hw_version_2 and signature are optional: they are sent
+        only when set in config.json. Everything else the MAG's own portal sends
+        was tested and found unnecessary (see README).
+        """
         self.token = None
         js = self._request({"type": "stb", "action": "handshake", "token": "", "prehash": "false"})
         self.token = js["token"]
         c = self.cfg
-        metrics = json.dumps({"mac": c["mac"], "sn": c["sn"], "model": c["model"], "type": "STB",
-                              "uid": c["device_id2"], "random": js.get("random", "")},
-                             separators=(",", ":"))
-        profile = self._request({
-            "type": "stb", "action": "get_profile", "hd": 1,
-            "ver": "ImageDescription: %s; PORTAL version: 5.6.10; API Version: JS API version: 349"
-                   % c["image_desc"],
-            "num_banks": 1, "sn": c["sn"], "stb_type": c["model"], "client_type": "STB",
-            "image_version": c["image_version"], "video_out": "hdmi",
-            "device_id": c["device_id"], "device_id2": c["device_id2"],
-            "signature": c["signature"], "auth_second_step": 0,
-            "hw_version": c["hw_version"], "not_valid_token": 0, "metrics": metrics,
-            "hw_version_2": c["hw_version_2"], "timestamp": int(time.time()),
-            "api_signature": 241, "prehash": "false",
-        })
+        params = {"type": "stb", "action": "get_profile", "stb_type": c["model"],
+                  "device_id": c["device_id"], "device_id2": c["device_id2"]}
+        for key in ("sn", "hw_version", "hw_version_2", "signature"):
+            if c.get(key):
+                params[key] = c[key]
+        profile = self._request(params)
         status = str((profile or {}).get("status", "0"))
         if status != "0":
             raise RuntimeError("portal login refused (status %s): %s" % (status, profile.get("msg", "")))

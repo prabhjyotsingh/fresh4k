@@ -3,11 +3,8 @@
   "mac": "",
   "port": 8080,
   "timezone": "America/Toronto",
-  "sn": "",
   "device_id": "",
   "device_id2": "",
-  "hw_version": "",
-  "hw_version_2": "",
   "vod_groups": [
     {
       "title": "\u2605 MY PICKS",
