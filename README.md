@@ -144,7 +144,7 @@ when watched past 95%.
 
 ## Status
 
-- The portal calls (browse, play, resume, subtitles) work on-device.
+- Movies & series: browse, play, resume work on-device.
 - The screens described above were rebuilt after that and have been checked in
   desktop Chrome only: with mock data, with a stand-in for the MAG's player, and
   through the TV transport. They have not been run on the MAG or the TV yet.
