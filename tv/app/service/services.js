@@ -609,6 +609,142 @@ function vodSubtitle(streamUrl, track, shift, cb) {
   });
 }
 
+// ------------------------------------------------------------ details (Wikidata)
+// Port of server.py wiki_info(): fills the fields the portal left empty on a detail
+// screen. Matches on title AND year. Cached with the catalog (see callVod), and
+// errors are not cached, so a failed lookup is tried again next time.
+var WIKI_UA = 'fresh4k/1.0 (home media box)';
+var WD_API = 'https://www.wikidata.org/w/api.php';
+var WD_FILM_TYPES = { Q11424: 1, Q5398426: 1, Q24862: 1 };   // film, TV series, short film
+
+// server.py clean_title(): 'Party Animal (PREDVD) [HD]' -> 'Party Animal'
+function cleanTitle(name) {
+  var s = String(name || '').replace(/\[[^\]]*\]|\([^)]*\)/g, ' ');
+  s = s.replace(/\b(PRE\s*DVD|HDRip|DVDRip|FHD|UHD|HD|4K|SD)\b/gi, ' ');
+  return s.replace(/\s+/g, ' ').replace(/^ | $/g, '');
+}
+
+// GET a JSON URL. Callback: (err, data); a 404 gives (null, null).
+function getJson(target, cb) {
+  var done = false;
+  function finish(err, data) { if (!done) { done = true; cb(err, data); } }
+  var lib = /^https:/i.test(target) ? require('https') : http;
+  var req = lib.get(target, { headers: { 'User-Agent': WIKI_UA, 'Accept': 'application/json' }, timeout: 10000 }, function (res) {
+    var body = '';
+    res.setEncoding('utf8');
+    res.on('data', function (d) { body += d; });
+    res.on('end', function () {
+      if (res.statusCode === 404) return finish(null, null);
+      if (res.statusCode !== 200) return finish('HTTP ' + res.statusCode);
+      try { finish(null, JSON.parse(body)); } catch (e) { finish('bad JSON'); }
+    });
+  });
+  req.on('timeout', function () { req.abort(); finish('timeout'); });
+  req.on('error', function (e) { finish(String(e.message || e)); });
+}
+
+function claimIds(entity, prop) {
+  var out = [], st = ((entity.claims || {})[prop]) || [];
+  st.forEach(function (s) {
+    var v = s.mainsnak && s.mainsnak.datavalue && s.mainsnak.datavalue.value;
+    if (v && typeof v === 'object' && v.id) out.push(v.id);
+  });
+  return out;
+}
+
+function claimYears(entity, props) {
+  var years = [];
+  props.forEach(function (prop) {
+    ((entity.claims || {})[prop] || []).forEach(function (s) {
+      var v = s.mainsnak && s.mainsnak.datavalue && s.mainsnak.datavalue.value;
+      var t = v && typeof v === 'object' ? (v.time || '') : '';
+      if (/^[+-]\d{4}/.test(t)) years.push(t.slice(1, 5));
+    });
+  });
+  return years;
+}
+
+function wdUrl(params) {
+  return WD_API + '?' + querystring.stringify(params);
+}
+
+// Callback: (err, info); info is {} when there is no confident match.
+function wikiInfo(name, year, cb) {
+  var title = cleanTitle(name);
+  year = String(year || '').replace(/^\s+|\s+$/g, '').slice(0, 4);
+  if (!title || !/^\d{4}$/.test(year)) return cb(null, {});
+  getJson(wdUrl({ action: 'wbsearchentities', search: title, language: 'en', type: 'item', limit: 10, format: 'json' }),
+    function (err, found) {
+      if (err) return cb(err);
+      var ids = ((found && found.search) || []).map(function (h) { return h.id; });
+      if (!ids.length) return cb(null, {});
+      getJson(wdUrl({ action: 'wbgetentities', ids: ids.join('|'), props: 'claims|sitelinks|labels',
+        languages: 'en', sitefilter: 'enwiki', format: 'json' }), function (err2, got) {
+        if (err2) return cb(err2);
+        var ents = (got && got.entities) || {}, match = null;
+        for (var i = 0; i < ids.length && !match; i++) {
+          var e = ents[ids[i]] || {};
+          var label = ((e.labels || {}).en || {}).value || '';
+          var wiki = ((e.sitelinks || {}).enwiki || {}).title || '';
+          if (title.toLowerCase() !== label.toLowerCase() && title.toLowerCase() !== wiki.toLowerCase()) continue;
+          if (!claimIds(e, 'P31').some(function (t) { return WD_FILM_TYPES[t]; })) continue;
+          if (claimYears(e, ['P577', 'P580']).indexOf(year) < 0) continue;
+          match = e;
+        }
+        if (!match) return cb(null, {});
+        var directors = claimIds(match, 'P57').slice(0, 3);
+        var cast = claimIds(match, 'P161').slice(0, 5);
+        var genres = claimIds(match, 'P136').slice(0, 3);
+        var wanted = [], seen = {};
+        directors.concat(cast, genres).forEach(function (id) { if (!seen[id]) { seen[id] = 1; wanted.push(id); } });
+        var labels = {};
+        (function nextChunk(from) {
+          if (from >= wanted.length) return finish();
+          getJson(wdUrl({ action: 'wbgetentities', ids: wanted.slice(from, from + 50).join('|'), props: 'labels',
+            languages: 'en', languagefallback: 1, format: 'json' }), function (err3, g) {
+            if (err3) return cb(err3);
+            var es = (g && g.entities) || {};
+            Object.keys(es).forEach(function (k) { labels[k] = ((es[k].labels || {}).en || {}).value || ''; });
+            nextChunk(from + 50);
+          });
+        })(0);
+        function names(ids) {
+          return ids.filter(function (i) { return labels[i]; }).map(function (i) { return labels[i]; }).join(', ');
+        }
+        function finish() {
+          var out = { year: year, director: names(directors), actors: names(cast), genres: names(genres) };
+          var wiki = ((match.sitelinks || {}).enwiki || {}).title || '';
+          if (!wiki) return done(out);
+          getJson('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(wiki.replace(/ /g, '_')),
+            function (err4, sum) {
+              if (err4) return cb(err4);
+              if (sum && sum.extract) out.description = sum.extract;
+              done(out);
+            });
+        }
+        function done(out) {
+          var clean = {};
+          Object.keys(out).forEach(function (k) { if (out[k]) clean[k] = out[k]; });
+          cb(null, clean);
+        }
+      });
+    });
+}
+
+// Route /api/vod/info: cached like the catalog. Any failure answers {} (the page
+// keeps what the portal gave) and is not cached, so it is tried again later.
+function vodInfo(name, year, cb) {
+  expireIfDue();
+  var key = 'info|' + cleanTitle(name) + '|' + String(year || '');
+  var hit = vodCache[key];
+  if (hit && hit.exp > Date.now()) return cb(null, hit.data);
+  wikiInfo(name, year, function (err, info) {
+    if (err) return cb(null, {});
+    remember(vodCache, key, { exp: Date.now() + VOD_TTL_MS, data: info }, CACHE_MAX);
+    cb(null, info);
+  });
+}
+
 // ------------------------------------------------------------- dispatcher
 // Routes the page's /api/... paths to the functions above. Anything not
 // ported yet (live TV, subtitles) returns an error the UI can show.
@@ -632,6 +768,8 @@ function route(p, params, cb) {
       return adultLock(cb);
     case '/api/cache/clear':
       return clearCache(cb);
+    case '/api/vod/info':
+      return vodInfo(q.name || '', q.year || '', cb);
     case '/api/vod/release':
       return vodRelease(q.url || '', cb);
     case '/api/live/genres':

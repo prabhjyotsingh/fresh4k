@@ -111,7 +111,7 @@
   // 24h: the provider updates movies and series once a day. Red (reload) drops it all.
   var DAY = 86400;
   var TTL = { '/api/vod/categories': DAY, '/api/live/genres': 600, '/api/vod/list': DAY,
-    '/api/vod/children': DAY, '/api/live/channels': 300 };
+    '/api/vod/children': DAY, '/api/live/channels': 300, '/api/vod/info': DAY };
   var cache = {}, cacheKeys = [], cacheStarted = Date.now();
   function api(path, params, cb) {
     if (Date.now() - cacheStarted >= DAY * 1000) { cache = {}; cacheKeys = []; cacheStarted = Date.now(); }
@@ -1255,13 +1255,33 @@
     $('d-title').innerHTML = esc(it.name);
     $('d-meta').innerHTML = metaHtml(it, true);
     $('d-desc').innerHTML = esc(it.description);
-    $('d-credits').innerHTML = (it.director ? '<div><b>Director</b>' + esc(it.director) + '</div>' : '') +
-      (it.actors ? '<div><b>Cast</b>' + esc(it.actors) + '</div>' : '');
+    $('d-credits').innerHTML = creditsHtml(it);
     ambient($('d-amb'), it.poster, loadedImg(tile, it.poster));
     S.flags.detail = true; S.flags.dsub = false;
     setZone('detail');
     buildMain();
+    fillInfo(it, d);
     if (it.is_series) loadSeasons(d);
+  }
+  function creditsHtml(it) {
+    return (it.director ? '<div><b>Director</b>' + esc(it.director) + '</div>' : '') +
+      (it.actors ? '<div><b>Cast</b>' + esc(it.actors) + '</div>' : '');
+  }
+  // Fields the portal left empty come from Wikidata/Wikipedia (server.py wiki_info). Only
+  // empty fields are filled; the portal's own data is never replaced.
+  function fillInfo(it, d) {
+    if (!it.year || (it.description && it.director && it.actors && it.genres)) return;
+    api('/api/vod/info', { name: it.name, year: it.year }, function (err, info) {
+      if (err || !info || S.detail !== d) return;
+      var changed = false;
+      ['description', 'director', 'actors', 'genres'].forEach(function (k) {
+        if (!it[k] && info[k]) { it[k] = info[k]; changed = true; }
+      });
+      if (!changed) return;
+      $('d-desc').innerHTML = esc(it.description);
+      $('d-credits').innerHTML = creditsHtml(it);
+      $('d-meta').innerHTML = metaHtml(it, true);
+    });
   }
   function loadSeasons(d) {
     d.extra = null;

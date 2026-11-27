@@ -134,6 +134,106 @@ class AuthError(Exception):
     pass
 
 
+# -- Details from Wikidata and Wikipedia (free, no signup) ---------------------
+# Fills the fields the portal left empty on a detail screen. Mirrored in
+# tv/app/service/services.js. Matches only on title AND year, so a different
+# film with the same name is not used.
+WIKI_UA = "fresh4k/1.0 (home media box)"
+WD_API = "https://www.wikidata.org/w/api.php"
+WD_FILM_TYPES = {"Q11424", "Q5398426", "Q24862"}      # film, TV series, short film
+TAG_WORDS = re.compile(r"\b(PRE\s*DVD|HDRip|DVDRip|FHD|UHD|HD|4K|SD)\b", re.I)
+
+
+def clean_title(name):
+    """'Party Animal (PREDVD) [HD]' -> 'Party Animal'."""
+    s = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", name or "")
+    s = TAG_WORDS.sub(" ", s)
+    return " ".join(s.split())
+
+
+def _wiki_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": WIKI_UA, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def _claim_ids(entity, prop):
+    out = []
+    for st in (entity.get("claims") or {}).get(prop, []):
+        v = st.get("mainsnak", {}).get("datavalue", {}).get("value")
+        if isinstance(v, dict) and "id" in v:
+            out.append(v["id"])
+    return out
+
+
+def _claim_years(entity, props):
+    years = []
+    for prop in props:
+        for st in (entity.get("claims") or {}).get(prop, []):
+            t = st.get("mainsnak", {}).get("datavalue", {}).get("value", {})
+            t = t.get("time", "") if isinstance(t, dict) else ""
+            if re.match(r"^[+-]\d{4}", t):
+                years.append(t[1:5])
+    return years
+
+
+def wiki_info(name, year):
+    """{description, director, actors, genres, year} for a film or series, or {} if not sure."""
+    title = clean_title(name)
+    year = str(year or "").strip()[:4]
+    if not title or not re.match(r"^\d{4}$", year):
+        return {}
+    found = _wiki_json(WD_API + "?" + urllib.parse.urlencode({
+        "action": "wbsearchentities", "search": title, "language": "en", "type": "item",
+        "limit": 10, "format": "json"}))
+    ids = [h["id"] for h in found.get("search", [])]
+    if not ids:
+        return {}
+    ents = _wiki_json(WD_API + "?" + urllib.parse.urlencode({
+        "action": "wbgetentities", "ids": "|".join(ids), "props": "claims|sitelinks|labels",
+        "languages": "en", "sitefilter": "enwiki", "format": "json"})).get("entities", {})
+    match = None
+    for eid in ids:
+        e = ents.get(eid, {})
+        label = (e.get("labels", {}).get("en", {}) or {}).get("value", "")
+        wiki = (e.get("sitelinks", {}).get("enwiki", {}) or {}).get("title", "")
+        if title.lower() not in (label.lower(), wiki.lower()):
+            continue
+        if not WD_FILM_TYPES & set(_claim_ids(e, "P31")):
+            continue
+        if year not in _claim_years(e, ["P577", "P580"]):
+            continue
+        match = e
+        break
+    if not match:
+        return {}
+    directors = _claim_ids(match, "P57")[:3]
+    cast = _claim_ids(match, "P161")[:5]
+    genres = _claim_ids(match, "P136")[:3]
+    wanted = list(dict.fromkeys(directors + cast + genres))
+    labels = {}
+    for i in range(0, len(wanted), 50):
+        got = _wiki_json(WD_API + "?" + urllib.parse.urlencode({
+            "action": "wbgetentities", "ids": "|".join(wanted[i:i + 50]), "props": "labels",
+            "languages": "en", "languagefallback": 1, "format": "json"})).get("entities", {})
+        for k, v in got.items():
+            labels[k] = (v.get("labels", {}).get("en", {}) or {}).get("value", "")
+
+    def names(ids):
+        return ", ".join(labels[i] for i in ids if labels.get(i))
+    out = {"year": year, "director": names(directors), "actors": names(cast), "genres": names(genres)}
+    wiki = (match.get("sitelinks", {}).get("enwiki", {}) or {}).get("title", "")
+    if wiki:
+        try:
+            summary = _wiki_json("https://en.wikipedia.org/api/rest_v1/page/summary/" +
+                                 urllib.parse.quote(wiki.replace(" ", "_"), safe=""))
+            out["description"] = summary.get("extract", "") or ""
+        except urllib.error.HTTPError as e:          # no summary page: keep the rest
+            if e.code != 404:
+                raise
+    return {k: v for k, v in out.items() if v}
+
+
 class Stalker:
     """Minimal Stalker portal client authenticating as a MAG box."""
 
@@ -400,6 +500,23 @@ class Stalker:
                         "force_ch_link_check": 0})
         raw = (js or {}).get("cmd") or ""
         return {"url": self.clean_cmd(raw), "cmd": raw}
+
+    def vod_info(self, name, year):
+        """Details the portal left empty, from Wikidata/Wikipedia. Cached like the portal answers."""
+        key = ("info", clean_title(name), str(year or ""))
+        with self.cache_lock:
+            self._expire_if_due()
+            hit = self.cache.get(key)
+        if hit:
+            return hit[1]
+        try:
+            info = wiki_info(name, year)
+        except Exception as e:                       # network or Wikidata trouble: try again later
+            print("info lookup failed for %r: %s" % (name, e), file=sys.stderr)
+            return {}
+        with self.cache_lock:
+            remember(self.cache, key, (time.time() + VOD_TTL, info), CACHE_MAX)
+        return info
 
     def vod_release(self, url):
         """Tell the portal we're done with a stream link (frees the stream slot)."""
@@ -676,6 +793,9 @@ class Mock:
     def live_link(self, cmd):
         return {"url": self.SAMPLE}
 
+    def vod_info(self, name, year):
+        return {}
+
     def clear_cache(self):
         return {"ok": True}
 
@@ -691,6 +811,7 @@ def make_handler(backend, cfg):
         "/api/adult/unlock": lambda q: backend.adult_unlock(q.get("pin", "")),
         "/api/adult/lock": lambda q: backend.adult_lock(),
         "/api/cache/clear": lambda q: backend.clear_cache(),
+        "/api/vod/info": lambda q: backend.vod_info(q.get("name", ""), q.get("year", "")),
         "/api/vod/subs": lambda q: backend.vod_subs(q["url"]),
         "/api/live/genres": lambda q: backend.live_genres(q.get("group")),
         "/api/live/channels": lambda q: backend.live_channels(q.get("genre", "*"), int(q.get("page", 1))),
