@@ -129,6 +129,61 @@ function pageOf(js, mapper) {
 }
 
 // ---------------------------------------------------------------------- VOD
+// Catalog answers are kept for 24h: the provider updates movies and series once a
+// day. The red button calls clearCache() (route /api/cache/clear). Mirrors server.py
+// VOD_TTL and Stalker.call(ttl=...). Stream links are never cached.
+var VOD_TTL_MS = 24 * 3600 * 1000;
+// Memory limits, as in server.py: the oldest entries go first when a cache is full.
+var CACHE_MAX = 300, SUB_CACHE_MAX = 40;
+var VOD_LIST_PAGES_CACHED = 5;   // deeper pages of a list or search always go to the portal
+var vodCache = {}, cacheStarted = Date.now();   // the whole cache is emptied every 24h
+
+// Store obj[key] = value, keeping obj at most `limit` keys (first-inserted dropped).
+function remember(obj, key, value, limit) {
+  delete obj[key];
+  obj[key] = value;
+  var keys = Object.keys(obj);
+  for (var i = 0; keys.length - i > limit; i++) delete obj[keys[i]];
+}
+
+function vodKey(params) {
+  return Object.keys(params).sort().map(function (k) { return k + '=' + params[k]; }).join('&');
+}
+
+// Empties every cache once 24h have passed since the last clear.
+function expireIfDue() {
+  if (Date.now() - cacheStarted >= VOD_TTL_MS) resetVodCache();
+}
+
+function callVod(params, cb) {
+  expireIfDue();
+  var key = vodKey(params), hit = vodCache[key];
+  if (hit && hit.exp > Date.now()) return cb(null, hit.data);
+  call(params, function (err, js) {
+    if (err) return cb(err);
+    if (Object.keys(vodCache).length >= CACHE_MAX) {       // full: drop what has expired first
+      var now = Date.now();
+      Object.keys(vodCache).forEach(function (k) { if (vodCache[k].exp <= now) delete vodCache[k]; });
+    }
+    remember(vodCache, key, { exp: Date.now() + VOD_TTL_MS, data: js }, CACHE_MAX);
+    cb(null, js);
+  });
+}
+
+// Empties every cache: catalog, lock and adult lists, and subtitles.
+function resetVodCache() {
+  vodCache = {};
+  subCache = {};
+  cacheStarted = Date.now();
+  lockedCache = null;
+  adultCache = null;
+}
+
+function clearCache(cb) {
+  resetVodCache();
+  cb(null, { ok: true });
+}
+
 // Adult content is locked by default: categories whose title says so, plus any
 // ids in config "locked_categories", are hidden from the menu and from search.
 // The portal's own "censored" flag is 0 on everything, so it can't be used.
@@ -159,7 +214,7 @@ function lockedFrom(js) {
 function lockedSet(cb) {
   if (!lockActive()) return cb(null, {});
   if (lockedCache) return cb(null, lockedCache);
-  call({ type: 'vod', action: 'get_categories' }, function (err, js) {
+  callVod({ type: 'vod', action: 'get_categories' }, function (err, js) {
     if (err) return cb(err);
     lockedCache = lockedFrom(js);
     cb(null, lockedCache);
@@ -167,7 +222,7 @@ function lockedSet(cb) {
 }
 
 function vodCategoryList(cb) {
-  call({ type: 'vod', action: 'get_categories' }, function (err, js) {
+  callVod({ type: 'vod', action: 'get_categories' }, function (err, js) {
     if (err) return cb(err);
     var locked = lockActive() ? lockedFrom(js) : {};
     lockedCache = locked;
@@ -205,7 +260,7 @@ var adultCache = null;
 function adultIds(cb) {
   if (cfg.adult_lock === false) return cb(null, {});
   if (adultCache) return cb(null, adultCache);
-  call({ type: 'vod', action: 'get_categories' }, function (err, js) {
+  callVod({ type: 'vod', action: 'get_categories' }, function (err, js) {
     if (err) return cb(err);
     adultCache = lockedFrom(js);
     cb(null, adultCache);
@@ -226,7 +281,8 @@ function vodList(category, page, search, cb) {
   var p = { type: 'vod', action: 'get_ordered_list', category: category || '*', genre: '*',
     p: page || 1, sortby: 'added', fav: 0 };
   if (search) p.search = search;
-  call(p, function (err, js) {
+  var fetch = (parseInt(p.p, 10) > VOD_LIST_PAGES_CACHED) ? call : callVod;
+  fetch(p, function (err, js) {
     if (err) return cb(err);
     var res = pageOf(js);
     lockedSet(function (e2, locked) {
@@ -246,7 +302,7 @@ function vodChildren(movieId, seasonId, episodeId, cb) {
   var items = [], page = 1, total = 1;
   (function next() {
     if (items.length >= total || page > 20) return cb(null, { total: items.length, per_page: items.length, items: items });
-    call({ type: 'vod', action: 'get_ordered_list', category: '*', movie_id: movieId,
+    callVod({ type: 'vod', action: 'get_ordered_list', category: '*', movie_id: movieId,
       season_id: seasonId || '0', episode_id: episodeId || '0', fav: 0, sortby: 'added',
       hd: 0, not_ended: 0, p: page }, function (err, js) {
       if (err) return cb(err);
@@ -470,6 +526,7 @@ function fetchAll(items, fn, cb) {
 // running wait for the same result instead of downloading the segments again.
 var subWaiting = {};
 function subtitleCues(streamUrl, track, cb) {
+  expireIfDue();
   var key = streamUrl.split('?')[0] + '|' + track;
   if (subCache[key]) return cb(null, subCache[key]);
   if (subWaiting[key]) return subWaiting[key].push(cb);
@@ -477,7 +534,7 @@ function subtitleCues(streamUrl, track, cb) {
   loadCues(streamUrl, track, function (err, cues) {
     var waiting = subWaiting[key] || [];
     delete subWaiting[key];
-    if (!err) subCache[key] = cues;
+    if (!err) remember(subCache, key, cues, SUB_CACHE_MAX);
     waiting.forEach(function (f) { f(err, cues); });
   });
 }
@@ -573,6 +630,8 @@ function route(p, params, cb) {
       return adultUnlock(q.pin, cb);
     case '/api/adult/lock':
       return adultLock(cb);
+    case '/api/cache/clear':
+      return clearCache(cb);
     case '/api/vod/release':
       return vodRelease(q.url || '', cb);
     case '/api/live/genres':

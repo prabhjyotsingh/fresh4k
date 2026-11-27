@@ -126,7 +126,7 @@ so the stock portal and this server will log each other out if used together.
 | Blue | Add/remove the selected title in My List |
 | Yellow | Remove the selected title from Continue watching |
 | Green | During playback: audio & subtitles |
-| Red | Reload the portal |
+| Red | Reload the portal and drop its cached movie and series lists (kept for 24 hours; only the first 5 pages of each list are kept) |
 
 During playback: OK or Play pauses, ◄ ► skip 30 s, Rew/Fwd 2 minutes, ▲ ▼
 5 minutes. Holding a key speeds the skip up (double after 6 steps, four times

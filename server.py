@@ -33,6 +33,25 @@ WEB = os.path.join(ROOT, "web")
 ADULT_TITLE = re.compile(r"adult|18\+|xxx|porn", re.I)
 # Titles the portal marks as pre-release DVD prints, e.g. "Max (PREDVD)" or "(PRE DVD)".
 PREDVD_TITLE = re.compile(r"PRE\s*DVD", re.I)
+# The provider updates movies and series once a day, so VOD catalog answers are kept
+# for 24h. The red button clears them first (GET /api/cache/clear), then reloads.
+# Mirrored in tv/app/service/services.js and web/app.js.
+VOD_TTL = 24 * 3600
+# Only the first pages of a list or search are cached; deeper pages always go to the portal.
+VOD_LIST_PAGES_CACHED = 5
+# Memory limits: the oldest entries go first when a cache is full. A portal page is a
+# few KB; a subtitle track can be a few hundred KB, so that cache is kept smaller.
+CACHE_MAX = 300
+SUB_CACHE_MAX = 40
+
+
+def remember(cache, key, value, limit):
+    """Store key -> value, keeping the dict at most `limit` long (oldest dropped).
+    Callers hold the cache lock."""
+    cache.pop(key, None)
+    cache[key] = value
+    while len(cache) > limit:
+        del cache[next(iter(cache))]
 
 
 def group_live(genres):
@@ -124,8 +143,10 @@ class Stalker:
         self.endpoint = self.base + cfg["api_path"]
         self.token = None
         self.lock = threading.Lock()
-        self.cache = {}
-        self.sub_cache = {}
+        self.cache = {}                             # portal answers: key -> (expires, result)
+        self.sub_cache = {}                         # subtitle cues: key -> cues
+        self.cache_lock = threading.Lock()          # guards both dicts (requests run in threads)
+        self.cache_started = time.time()            # the whole cache is emptied every 24h
         self.adult_unlocked = False                 # set by the PIN; resets when the server restarts
 
     # -- transport ---------------------------------------------------------
@@ -178,9 +199,18 @@ class Stalker:
         if status != "0":
             raise RuntimeError("portal login refused (status %s): %s" % (status, profile.get("msg", "")))
 
+    def _expire_if_due(self):
+        """Empty every cache once 24h have passed since the last clear. Caller holds cache_lock."""
+        if time.time() - self.cache_started >= VOD_TTL:
+            self.cache = {}
+            self.sub_cache = {}
+            self.cache_started = time.time()
+
     def call(self, params, ttl=0):
         key = tuple(sorted(params.items()))
         if ttl:
+            with self.cache_lock:
+                self._expire_if_due()
             hit = self.cache.get(key)
             if hit and hit[0] > time.time():
                 return hit[1]
@@ -194,8 +224,21 @@ class Stalker:
                 self.login()
             result = self._request(params)
         if ttl:
-            self.cache[key] = (time.time() + ttl, result)
+            with self.cache_lock:
+                if len(self.cache) >= CACHE_MAX:          # full: drop what has expired first
+                    now = time.time()
+                    for k in [k for k, v in self.cache.items() if v[0] <= now]:
+                        del self.cache[k]
+                remember(self.cache, key, (time.time() + ttl, result), CACHE_MAX)
         return result
+
+    def clear_cache(self):
+        """Forget every cached portal answer and subtitle, so the next request goes to the provider."""
+        with self.cache_lock:
+            self.cache = {}
+            self.sub_cache = {}
+            self.cache_started = time.time()
+        return {"ok": True}
 
     # -- helpers -----------------------------------------------------------
     def abs_url(self, uri):
@@ -267,7 +310,7 @@ class Stalker:
         Used to keep adult titles out of Continue watching."""
         if not self.cfg.get("adult_lock", True):
             return set()
-        return self._locked_from(self.call({"type": "vod", "action": "get_categories"}, ttl=3600))
+        return self._locked_from(self.call({"type": "vod", "action": "get_categories"}, ttl=VOD_TTL))
 
     def adult_unlock(self, pin):
         want = str(self.cfg.get("adult_pin") or "")
@@ -285,11 +328,11 @@ class Stalker:
     def locked_ids(self):
         if not self.lock_active():
             return set()
-        return self._locked_from(self.call({"type": "vod", "action": "get_categories"}, ttl=3600))
+        return self._locked_from(self.call({"type": "vod", "action": "get_categories"}, ttl=VOD_TTL))
 
     # -- VOD ---------------------------------------------------------------
     def _vod_category_list(self):
-        raw = self.call({"type": "vod", "action": "get_categories"}, ttl=3600)
+        raw = self.call({"type": "vod", "action": "get_categories"}, ttl=VOD_TTL)
         locked = self._locked_from(raw) if self.lock_active() else set()
         cats = [{"id": str(c["id"]), "title": c["title"]} for c in raw or []
                 if str(c.get("id")) != "*" and str(c.get("id")) not in locked]
@@ -319,7 +362,8 @@ class Stalker:
              "genre": "*", "p": page, "sortby": "added", "fav": 0}
         if search:
             p["search"] = search
-        res = self._page(self.call(p, ttl=600), self._vod_item)
+        ttl = VOD_TTL if int(page) <= VOD_LIST_PAGES_CACHED else 0
+        res = self._page(self.call(p, ttl=ttl), self._vod_item)
         locked = self.locked_ids()
         res["items"] = [i for i in res["items"] if i["category_id"] not in locked]
         adult = self._adult_ids()
@@ -335,7 +379,7 @@ class Stalker:
             js = self.call({"type": "vod", "action": "get_ordered_list", "category": "*",
                             "movie_id": movie_id, "season_id": season_id,
                             "episode_id": episode_id, "fav": 0, "sortby": "added",
-                            "hd": 0, "not_ended": 0, "p": page}, ttl=600)
+                            "hd": 0, "not_ended": 0, "p": page}, ttl=VOD_TTL)
             res = self._page(js, self._vod_item)
             if not res["items"]:
                 break
@@ -445,7 +489,8 @@ class Stalker:
     def _subtitle_cues(self, url, track):
         """Fetch and merge an HLS subtitle track's WebVTT segments into cues."""
         key = url.split("?")[0] + "|" + track
-        with self.lock:
+        with self.cache_lock:
+            self._expire_if_due()
             if key in self.sub_cache:
                 return self.sub_cache[key]
         subs = self._subs_from_master(self._get(url))
@@ -467,8 +512,8 @@ class Stalker:
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
             for part in ex.map(grab, segs):
                 cues.extend(part)
-        with self.lock:
-            self.sub_cache[key] = cues
+        with self.cache_lock:
+            remember(self.sub_cache, key, cues, SUB_CACHE_MAX)
         return cues
 
     def vod_subtitle_srt(self, url, track="", shift=0.0):
@@ -631,6 +676,9 @@ class Mock:
     def live_link(self, cmd):
         return {"url": self.SAMPLE}
 
+    def clear_cache(self):
+        return {"ok": True}
+
 
 def make_handler(backend, cfg):
     routes = {
@@ -642,6 +690,7 @@ def make_handler(backend, cfg):
         "/api/vod/release": lambda q: backend.vod_release(q["url"]),
         "/api/adult/unlock": lambda q: backend.adult_unlock(q.get("pin", "")),
         "/api/adult/lock": lambda q: backend.adult_lock(),
+        "/api/cache/clear": lambda q: backend.clear_cache(),
         "/api/vod/subs": lambda q: backend.vod_subs(q["url"]),
         "/api/live/genres": lambda q: backend.live_genres(q.get("group")),
         "/api/live/channels": lambda q: backend.live_channels(q.get("genre", "*"), int(q.get("page", 1))),

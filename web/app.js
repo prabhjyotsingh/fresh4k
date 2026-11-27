@@ -107,12 +107,17 @@
   var pending = 0;
   function busy(on) { pending = Math.max(0, pending + (on ? 1 : -1)); setFlag('busy', pending > 0); }
 
-  // Lists are kept for a few minutes, so going back to a tab or a category is instant.
-  var TTL = { '/api/vod/categories': 600, '/api/live/genres': 600, '/api/vod/list': 300,
-    '/api/vod/children': 300, '/api/live/channels': 300 };
-  var cache = {}, cacheKeys = [];
+  // Lists are kept so going back to a tab or a category is instant. VOD is kept for
+  // 24h: the provider updates movies and series once a day. Red (reload) drops it all.
+  var DAY = 86400;
+  var TTL = { '/api/vod/categories': DAY, '/api/live/genres': 600, '/api/vod/list': DAY,
+    '/api/vod/children': DAY, '/api/live/channels': 300 };
+  var cache = {}, cacheKeys = [], cacheStarted = Date.now();
   function api(path, params, cb) {
-    var ttl = TTL[path], key = ttl ? path + '?' + qs(params || {}) : '', hit = key && cache[key];
+    if (Date.now() - cacheStarted >= DAY * 1000) { cache = {}; cacheKeys = []; cacheStarted = Date.now(); }
+    var ttl = TTL[path];
+    if (path === '/api/vod/list' && params && params.page > 5) ttl = 0;   // only the first 5 pages are kept
+    var key = ttl ? path + '?' + qs(params || {}) : '', hit = key && cache[key];
     if (hit && hit.exp > Date.now()) { setTimeout(function () { cb(null, hit.data); }, 0); return; }
     busy(true);
     apiRaw(path, params, function (err, data) {
@@ -124,6 +129,14 @@
       }
       cb(err, data);
     });
+  }
+  // Red: clear the server's cached portal answers, then reload. The reload also
+  // happens if the server does not answer in time, so the button always works.
+  function refreshPortal() {
+    var done = false;
+    function go() { if (!done) { done = true; location.reload(); } }
+    apiRaw('/api/cache/clear', {}, go);
+    setTimeout(go, 1500);
   }
   function dropCache() { cache = {}; cacheKeys = []; S.memo = {}; S.memoKeys = []; S.home.ready = false; }
   function apiRaw(path, params, cb) {
@@ -2046,9 +2059,9 @@
   }, false);
   */
   document.addEventListener('keydown', function (e) {
-    if ((e.keyCode === 112 || e.keyCode === 403) && S.zone !== 'search') {   // Red button (403 on webOS): reload the portal
+    if ((e.keyCode === 112 || e.keyCode === 403) && S.zone !== 'search') {   // Red button (403 on webOS): refresh the portal
       if (P.o) P.stop();
-      location.reload();
+      refreshPortal();
       return;
     }
     if (e.keyCode === 107 || e.keyCode === 187 || e.keyCode === 61) { setVol(5); e.preventDefault(); return; }
