@@ -12,6 +12,8 @@ Python 3.7+, standard library only.
     MOCK=1 python3 server.py          # fake data, for testing in a browser
 """
 import concurrent.futures
+import hashlib
+import html
 import json
 import os
 import re
@@ -505,39 +507,96 @@ class Stalker:
         return {"url": self.clean_cmd(raw), "cmd": raw}
 
 
+def mock_art(seed, title, logo=False):
+    """SVG stand-in for a poster or a channel logo. Mock mode only."""
+    h = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
+    hue, hue2 = h % 360, (h % 360 + 40 + (h >> 9) % 80) % 360
+    if logo:
+        return ('<svg xmlns="http://www.w3.org/2000/svg" width="152" height="100" viewBox="0 0 152 100">'
+                '<rect width="152" height="100" rx="12" fill="hsl(%d,55%%,38%%)"/>'
+                '<text x="76" y="62" font-family="Arial" font-size="34" font-weight="bold" fill="#fff" '
+                'text-anchor="middle">%s</text></svg>' % (hue, html.escape(title[:3].upper())))
+    words, lines = title.split(), [""]
+    for w in words:                                   # wrap the title to ~11 characters a line
+        if lines[-1] and len(lines[-1]) + len(w) > 10:
+            lines.append("")
+        lines[-1] = (lines[-1] + " " + w).strip()
+    text = "".join('<text x="24" y="%d" font-family="Arial" font-size="34" font-weight="bold" fill="#fff">%s</text>'
+                   % (300 + i * 40, html.escape(l)) for i, l in enumerate(lines[:3]))
+    cx, cy, r = 60 + (h >> 4) % 180, 90 + (h >> 12) % 120, 60 + (h >> 20) % 70
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450" '
+            'preserveAspectRatio="none"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+            '<stop offset="0" stop-color="hsl(%d,60%%,42%%)"/><stop offset="1" stop-color="hsl(%d,65%%,14%%)"/>'
+            '</linearGradient></defs><rect width="300" height="450" fill="url(#g)"/>'
+            '<circle cx="%d" cy="%d" r="%d" fill="hsl(%d,80%%,62%%)" opacity=".55"/>'
+            '<circle cx="%d" cy="%d" r="%d" fill="hsl(%d,70%%,30%%)" opacity=".6"/>'
+            '<rect y="250" width="300" height="200" fill="#000" opacity=".28"/>%s</svg>'
+            % (hue, hue2, cx, cy, r, hue2, 300 - cx // 2, cy + 130, r + 30, hue, text))
+
+
 class Mock:
     """Fake backend for trying the UI in a desktop browser."""
 
     SAMPLE = "https://media.w3.org/2010/05/sintel/trailer.mp4"
+    PIN = "0000"
+    CATS = ["New Movies", "Action", "Comedy", "Drama", "Kids", "TV Series", "Documentary", "4K UHD"]
+    FIRST = ["The Last", "Midnight", "Silent", "Crimson", "Paper", "Electric", "Hollow", "Golden",
+             "Broken", "Wild", "Northern", "Savage", "Quiet", "Burning", "Lost", "Iron"]
+    SECOND = ["Harbor", "Run", "Empire", "Garden", "Protocol", "Highway", "Kingdom", "Witness", "Orchard",
+              "Frontier", "Tide", "Letters", "Signal", "Summer", "Avenue", "Machine", "River"]
+    PLOT = ("A stranger arrives in a town that has kept one secret for thirty years. "
+            "What begins as a favour for an old friend becomes a race against the people who buried it. ")
+
+    def __init__(self):
+        self.adult_unlocked = False
 
     def vod_categories(self):
-        return [{"id": str(i), "title": t} for i, t in enumerate(
-            ["New Movies", "Action", "Comedy", "Drama", "Kids", "TV Series",
-             "Documentary", "4K UHD"], 1)]
+        rows = [{"id": str(i), "title": t} for i, t in enumerate(self.CATS, 1)]
+        out = [{"header": "★ MY PICKS"}] + rows[:4] + [{"header": "MORE"}] + rows[4:]
+        if self.adult_unlocked:
+            return out + [{"id": "9", "title": "Adult"},
+                          {"id": "adult-lock", "title": "Lock adult content", "adult": "lock"}]
+        return out + [{"id": "adult-unlock", "title": "Adult content (PIN)", "adult": "unlock"}]
+
+    def adult_unlock(self, pin):
+        if str(pin) != self.PIN:
+            raise RuntimeError("wrong PIN")
+        self.adult_unlocked = True
+        return {"ok": True}
+
+    def adult_lock(self):
+        self.adult_unlocked = False
+        return {"ok": True}
 
     def _movie(self, cat, i):
-        series = cat == "6"
-        return {"id": "%s%03d" % (cat, i), "name": ("Series" if series else "Movie") + " %s-%d" % (cat, i),
-                "year": str(2000 + i % 25), "rating": "%.1f" % (5 + (i * 7) % 50 / 10.0),
-                "genres": "Action, Drama", "director": "J. Doe", "actors": "A. Actor, B. Actor",
-                "time": "112", "description": "A short synopsis of the title goes here. " * 3,
-                "poster": "", "cmd": "mock", "is_series": series, "is_season": False,
+        c = int(cat)
+        series = cat == "6" or i % 11 == 7
+        name = "%s %s" % (self.FIRST[(i * 3 + c) % 16], self.SECOND[(i * 5 + c * 2) % 17])
+        predvd = i % 9 == 4 and not series
+        return {"id": "%s%03d" % (cat, i), "category_id": cat, "name": name + (" (PREDVD)" if predvd else ""),
+                "warn": "PREDVD" if predvd else "", "adult": cat == "9",
+                "year": str(2002 + (i * 7 + c) % 24), "rating": "" if i % 6 == 5 else "%.1f" % (5 + (i * 7) % 45 / 10.0),
+                "genres": ["Action, Thriller", "Drama", "Comedy, Romance", "Sci-Fi, Adventure"][(i + c) % 4],
+                "director": "J. Doe", "actors": "A. Actor, B. Actor, C. Actor",
+                "time": str(88 + (i * 13) % 70), "description": self.PLOT * (1 + i % 3),
+                "poster": "" if i % 13 == 12 else "/mock/art/%s%03d.svg?t=%s" % (cat, i, urllib.parse.quote(name)),
+                "cmd": "mock", "is_series": series, "is_season": False,
                 "is_episode": False, "series": []}
 
     def vod_list(self, category, page, search=""):
-        cat = category if category not in ("*", "") else "1"
-        start = (page - 1) * 14
-        items = [self._movie(cat, i) for i in range(start, min(start + 14, 61))]
+        cats = [category] if category not in ("*", "") else [str(c) for c in range(1, 9)]
+        items = [self._movie(c, i) for c in cats for i in range(61)]
         if search:
             items = [m for m in items if search.lower() in m["name"].lower()]
-        return {"total": 61, "per_page": 14, "items": items}
+        start = (page - 1) * 14
+        return {"total": len(items), "per_page": 14, "items": items[start:start + 14]}
 
     def vod_children(self, movie_id, season_id="0", episode_id="0"):
         if season_id == "0":
-            items = [{"id": "s%d" % s, "name": "Season %d" % s, "is_season": True} for s in range(1, 4)]
+            items = [{"id": "s%d" % s, "name": "Season %d" % s, "is_season": True} for s in (2, 1, 3)]
         else:
-            items = [{"id": "e%d" % e, "name": "Episode %d" % e, "is_episode": True,
-                      "series_number": str(e)} for e in range(10, 0, -1)]
+            items = [{"id": "%se%d" % (season_id, e), "name": "Episode %d" % e, "is_episode": True,
+                      "series_number": str(e)} for e in range(8, 0, -1)]
         return {"total": len(items), "per_page": len(items), "items": items}
 
     def vod_play(self, movie_id, season_id="0", episode_id="0", series=""):
@@ -553,12 +612,21 @@ class Mock:
         return "1\n00:00:01,000 --> 00:00:04,000\nSample subtitle (mock)\n"
 
     def live_genres(self, group=None):
-        return [{"id": "1", "title": "News"}, {"id": "2", "title": "Sports"}]
+        titles = ["ENGLISH | News", "ENGLISH | Sports", "ENGLISH | Movies", "HINDI | News",
+                  "HINDI | Entertainment", "KIDS"]
+        genres = [{"id": "*", "title": "All"}] + [{"id": str(i), "title": t} for i, t in enumerate(titles, 1)]
+        top, subs = group_live(genres)
+        if group is None:
+            return top
+        return [{"id": "back", "title": "< All groups", "back": True}] + subs.get(group, [])
 
     def live_channels(self, genre, page):
-        return {"total": 20, "per_page": 20, "items": [
-            {"id": str(i), "number": str(i), "name": "Channel %d" % i, "logo": "", "cmd": "mock"}
-            for i in range(1, 21)]}
+        names = ["News 24", "Sports One", "Cinema Max", "Kids Planet", "Music Box", "Nature HD", "City TV"]
+        start = (page - 1) * 14
+        items = [{"id": str(i), "number": str(i), "name": "%s %d" % (names[i % 7], i),
+                  "logo": "" if i % 5 == 0 else "/mock/art/ch%d.svg?logo=1&t=%s" % (i, urllib.parse.quote(names[i % 7])),
+                  "cmd": "mock"} for i in range(start + 1, min(start + 15, 41))]
+        return {"total": 40, "per_page": 14, "items": items}
 
     def live_link(self, cmd):
         return {"url": self.SAMPLE}
@@ -623,6 +691,15 @@ def make_handler(backend, cfg):
                 self.end_headers()
                 self.wfile.write(srt)
                 return
+            if cfg["mock"] and parsed.path.startswith("/mock/art/"):          # generated posters and logos
+                q = dict(urllib.parse.parse_qsl(parsed.query))
+                art = mock_art(parsed.path, q.get("t", ""), bool(q.get("logo"))).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "image/svg+xml")
+                self.send_header("Content-Length", str(len(art)))
+                self.end_headers()
+                self.wfile.write(art)
+                return
             # clean URLs: /settings -> web/settings.html
             last = parsed.path.rsplit("/", 1)[-1]
             if last and "." not in last and os.path.isfile(os.path.join(WEB, parsed.path.lstrip("/") + ".html")):
@@ -631,6 +708,8 @@ def make_handler(backend, cfg):
             if not route:
                 return super().do_GET()
             q = dict(urllib.parse.parse_qsl(parsed.query))
+            if cfg["mock"] and MOCK_DELAY:                        # MOCK_DELAY=0.8: see the loading states
+                time.sleep(MOCK_DELAY)
             try:
                 body, status = json.dumps(route(q)).encode(), 200
             except Exception as e:  # report backend errors to the UI
@@ -691,6 +770,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 NO_REDIRECT = urllib.request.build_opener(_NoRedirect)
+MOCK_DELAY = float(os.environ.get("MOCK_DELAY") or 0)   # seconds added to every mock API reply
 CAPTURE_LOG = os.path.join(ROOT, "capture.log")
 STATE_FILE = os.path.join(ROOT, "state.json")
 STATE_LOCK = threading.Lock()

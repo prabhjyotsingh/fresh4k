@@ -120,20 +120,15 @@
   }, true);
   */
 
-  // On-screen hints: show the TV's buttons, not the MAG's.
-  function fixHints() {
-    var hint = document.getElementById('hint');
-    if (hint) hint.innerHTML = hint.innerHTML.replace('BACK return', 'STOP back');
-    var osd = document.getElementById('osd-hint');
-    if (osd) osd.textContent = 'GREEN: subtitles   STOP: back   LEFT/RIGHT: 30s   UP/DOWN: 5 min   OK: pause';
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fixHints, false);
-  else fixHints();
+  // On-screen hints: app.js writes them, with the TV's names for the buttons.
+  // On this TV, Stop is the key that goes back (see the key map below).
+  window.fkLabels = { back: 'STOP' };
 
   // webOS remote -> the key codes app.js uses (K.* in app.js).
   window.fkKeyMap = {
     403: 112,   // Red             -> RED
     404: 113,   // Green           -> GREEN
+    405: 114,   // Yellow          -> YELLOW (remove from Continue watching)
     406: 115,   // Blue            -> BLUE
     415: 82,    // Play            -> PLAY
     19:  82,    // Pause           -> PLAY (toggle)

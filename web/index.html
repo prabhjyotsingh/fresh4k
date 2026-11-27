@@ -8,34 +8,77 @@
 <body>
 <video id="video"></video>
 <div id="app">
+  <div id="home">
+    <div id="hero">
+      <canvas id="h-amb" width="24" height="8"></canvas>
+      <div id="h-shade"></div>
+      <div id="h-text">
+        <div id="h-over"></div>
+        <div id="h-title"></div>
+        <div id="h-meta"></div>
+        <div id="h-desc"></div>
+        <div id="h-prog"><div id="h-bar"><div id="h-fill"></div></div><span id="h-left"></span></div>
+      </div>
+    </div>
+    <div id="rows"><div id="rows-in"></div></div>
+    <div id="h-fade"></div>
+  </div>
+  <div id="browse">
+    <div id="side"><div id="cats"></div></div>
+    <div id="lhead"><span id="l-title"></span><span id="l-count"></span></div>
+    <div id="searchbox"><input id="search" type="text" placeholder="Search movies &amp; series"></div>
+    <div id="findbar"><input id="find" type="text"></div>
+    <div id="grid"><div id="grid-in"></div></div>
+  </div>
   <div id="header">
     <div id="brand">IP <b>TV</b></div>
     <div id="tabs"></div>
     <div id="clock"></div>
   </div>
-  <div id="side">
-    <div id="cats"></div>
-  </div>
-  <div id="searchbox"><input id="search" type="text" placeholder="Search movies &amp; series"></div>
-  <div id="findbar"><input id="find" type="text"></div>
-  <div id="grid"></div>
-  <div id="hint">OK open &nbsp; ◄► navigate &nbsp; ▲ search &nbsp; BACK return &nbsp; <span class="blue">■</span> My List &nbsp; <span style="color:#e5534b">■</span> Reload</div>
 </div>
 <div id="detail">
+  <canvas id="d-amb" width="32" height="18"></canvas>
+  <div id="d-shade"></div>
   <div id="d-poster"></div>
   <div id="d-body">
+    <div id="d-over"></div>
     <div id="d-title"></div>
     <div id="d-meta"></div>
     <div id="d-desc"></div>
+    <div id="d-credits"></div>
     <div id="d-crumb"></div>
     <div id="d-list"></div>
   </div>
 </div>
-<div id="osd">
+<div id="hint"></div>
+<div id="upnext">
+  <canvas id="u-amb" width="32" height="18"></canvas>
+  <div id="u-shade"></div>
+  <div id="u-poster"></div>
+  <div id="u-body">
+    <div id="u-over">UP NEXT</div>
+    <div id="u-title"></div>
+    <div id="u-ep"></div>
+    <div id="u-bar"><div id="u-fill"></div></div>
+    <div id="u-count"></div>
+    <div id="u-hint"></div>
+  </div>
+</div>
+<div id="osd-top">
   <div id="osd-title"></div>
-  <div id="osd-bar"><div id="osd-fill"></div></div>
-  <div id="osd-row"><span id="osd-state"></span><span id="osd-time"></span></div>
-  <div id="osd-hint">GREEN: audio &amp; subtitles</div>
+  <div id="osd-sub"></div>
+  <div id="osd-clock"></div>
+</div>
+<div id="osd-bot">
+  <div id="osd-state"><span id="osd-ico"></span><span id="osd-text"></span></div>
+  <div id="osd-bar"><div id="osd-fill"></div><div id="osd-knob"></div></div>
+  <div id="osd-row"><span id="osd-pos"></span><span id="osd-end"></span></div>
+  <div id="osd-hint"></div>
+</div>
+<div id="loader">
+  <div id="ld-spin"></div>
+  <div id="ld-title"></div>
+  <div id="ld-sub"></div>
 </div>
 <div id="pmenu"></div>
 <div id="volosd">
@@ -43,9 +86,12 @@
   <div id="voltxt"></div>
 </div>
 <div id="pinbox">
-  <div id="pin-title">Adult content: enter PIN</div>
-  <input id="pin" type="password" maxlength="8" inputmode="numeric" autocomplete="off">
-  <div id="pin-hint">OK unlock &nbsp; BACK cancel</div>
+  <div id="pin-card">
+    <div id="pin-title">Adult content</div>
+    <div id="pin-sub">Enter your PIN</div>
+    <input id="pin" type="password" maxlength="8" inputmode="numeric" autocomplete="off">
+    <div id="pin-hint"></div>
+  </div>
 </div>
 <div id="spinner"></div>
 <div id="toast"></div>

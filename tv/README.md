@@ -105,6 +105,17 @@ ares-launch --device tv com.fresh4k.app
 Rebuild after any change to `config.json`, `web/`, or `app/`. The TV runs the
 copy from the last install.
 
+## Remote
+
+The app uses the same keys as the MAG build (see the main README), with these
+differences:
+
+- **Stop** goes back and closes the player. The TV's own Back key may ask to
+  leave the app instead.
+- **Channel up/down** pages through lists, and changes channel in Live TV.
+- **Green** during playback opens subtitles only. The TV plays one audio track.
+- The pointer (Magic Remote) clicks any item; its wheel scrolls lists.
+
 ## Logs and debugging
 
 - Page console (DevTools): `ares-inspect --device tv --app com.fresh4k.app --open`
